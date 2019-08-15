@@ -74,28 +74,28 @@ static pcre_extra *issuerdn_parse_regex_study;
 static pcre *fingerprint_parse_regex;
 static pcre_extra *fingerprint_parse_regex_study;
 
-static int DetectTlsSubjectMatch (ThreadVars *, DetectEngineThreadCtx *,
+static int DetectTlsSubjectMatch (DetectEngineThreadCtx *,
         Flow *, uint8_t, void *, void *,
         const Signature *, const SigMatchCtx *);
 static int DetectTlsSubjectSetup (DetectEngineCtx *, Signature *, const char *);
 static void DetectTlsSubjectRegisterTests(void);
 static void DetectTlsSubjectFree(void *);
 
-static int DetectTlsIssuerDNMatch (ThreadVars *, DetectEngineThreadCtx *,
+static int DetectTlsIssuerDNMatch (DetectEngineThreadCtx *,
         Flow *, uint8_t, void *, void *,
         const Signature *, const SigMatchCtx *);
 static int DetectTlsIssuerDNSetup (DetectEngineCtx *, Signature *, const char *);
 static void DetectTlsIssuerDNRegisterTests(void);
 static void DetectTlsIssuerDNFree(void *);
 
-static int DetectTlsFingerprintMatch (ThreadVars *, DetectEngineThreadCtx *,
+static int DetectTlsFingerprintMatch (DetectEngineThreadCtx *,
         Flow *, uint8_t, void *, void *,
         const Signature *, const SigMatchCtx *);
 static int DetectTlsFingerprintSetup (DetectEngineCtx *, Signature *, const char *);
 static void DetectTlsFingerprintFree(void *);
 
 static int DetectTlsStoreSetup (DetectEngineCtx *, Signature *, const char *);
-static int DetectTlsStorePostMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectTlsStorePostMatch (DetectEngineThreadCtx *det_ctx,
         Packet *, const Signature *s, const SigMatchCtx *unused);
 
 static int g_tls_cert_list_id = 0;
@@ -117,7 +117,7 @@ void DetectTlsRegister (void)
 {
     sigmatch_table[DETECT_AL_TLS_SUBJECT].name = "tls.subject";
     sigmatch_table[DETECT_AL_TLS_SUBJECT].desc = "match TLS/SSL certificate Subject field";
-    sigmatch_table[DETECT_AL_TLS_SUBJECT].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#tlssubject";
+    sigmatch_table[DETECT_AL_TLS_SUBJECT].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#tls-subject";
     sigmatch_table[DETECT_AL_TLS_SUBJECT].AppLayerTxMatch = DetectTlsSubjectMatch;
     sigmatch_table[DETECT_AL_TLS_SUBJECT].Setup = DetectTlsSubjectSetup;
     sigmatch_table[DETECT_AL_TLS_SUBJECT].Free  = DetectTlsSubjectFree;
@@ -126,7 +126,7 @@ void DetectTlsRegister (void)
 
     sigmatch_table[DETECT_AL_TLS_ISSUERDN].name = "tls.issuerdn";
     sigmatch_table[DETECT_AL_TLS_ISSUERDN].desc = "match TLS/SSL certificate IssuerDN field";
-    sigmatch_table[DETECT_AL_TLS_ISSUERDN].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#tlsissuerdn";
+    sigmatch_table[DETECT_AL_TLS_ISSUERDN].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#tls-issuerdn";
     sigmatch_table[DETECT_AL_TLS_ISSUERDN].AppLayerTxMatch = DetectTlsIssuerDNMatch;
     sigmatch_table[DETECT_AL_TLS_ISSUERDN].Setup = DetectTlsIssuerDNSetup;
     sigmatch_table[DETECT_AL_TLS_ISSUERDN].Free  = DetectTlsIssuerDNFree;
@@ -135,7 +135,7 @@ void DetectTlsRegister (void)
 
     sigmatch_table[DETECT_AL_TLS_FINGERPRINT].name = "tls.fingerprint";
     sigmatch_table[DETECT_AL_TLS_FINGERPRINT].desc = "match TLS/SSL certificate SHA1 fingerprint";
-    sigmatch_table[DETECT_AL_TLS_FINGERPRINT].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#tlsfingerprint";
+    sigmatch_table[DETECT_AL_TLS_FINGERPRINT].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#tls-fingerprint";
     sigmatch_table[DETECT_AL_TLS_FINGERPRINT].AppLayerTxMatch = DetectTlsFingerprintMatch;
     sigmatch_table[DETECT_AL_TLS_FINGERPRINT].Setup = DetectTlsFingerprintSetup;
     sigmatch_table[DETECT_AL_TLS_FINGERPRINT].Free  = DetectTlsFingerprintFree;
@@ -145,7 +145,7 @@ void DetectTlsRegister (void)
     sigmatch_table[DETECT_AL_TLS_STORE].name = "tls_store";
     sigmatch_table[DETECT_AL_TLS_STORE].alias = "tls.store";
     sigmatch_table[DETECT_AL_TLS_STORE].desc = "store TLS/SSL certificate on disk";
-    sigmatch_table[DETECT_AL_TLS_STORE].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#tlsstore";
+    sigmatch_table[DETECT_AL_TLS_STORE].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#tls-store";
     sigmatch_table[DETECT_AL_TLS_STORE].Match = DetectTlsStorePostMatch;
     sigmatch_table[DETECT_AL_TLS_STORE].Setup = DetectTlsStoreSetup;
     sigmatch_table[DETECT_AL_TLS_STORE].Free  = NULL;
@@ -177,7 +177,7 @@ void DetectTlsRegister (void)
  * \retval 0 no match
  * \retval 1 match
  */
-static int DetectTlsSubjectMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectTlsSubjectMatch (DetectEngineThreadCtx *det_ctx,
         Flow *f, uint8_t flags, void *state, void *txv,
         const Signature *s, const SigMatchCtx *m)
 {
@@ -377,7 +377,7 @@ static void DetectTlsSubjectRegisterTests(void)
  * \retval 0 no match
  * \retval 1 match
  */
-static int DetectTlsIssuerDNMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectTlsIssuerDNMatch (DetectEngineThreadCtx *det_ctx,
         Flow *f, uint8_t flags, void *state, void *txv,
         const Signature *s, const SigMatchCtx *m)
 {
@@ -641,7 +641,7 @@ error:
  * \retval 0 no match
  * \retval 1 match
  */
-static int DetectTlsFingerprintMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectTlsFingerprintMatch (DetectEngineThreadCtx *det_ctx,
         Flow *f, uint8_t flags, void *state, void *txv,
         const Signature *s, const SigMatchCtx *m)
 {
@@ -777,7 +777,7 @@ static int DetectTlsStoreSetup (DetectEngineCtx *de_ctx, Signature *s, const cha
 }
 
 /** \warning modifies Flow::alstate */
-static int DetectTlsStorePostMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectTlsStorePostMatch (DetectEngineThreadCtx *det_ctx,
         Packet *p, const Signature *s, const SigMatchCtx *unused)
 {
     SCEnter();

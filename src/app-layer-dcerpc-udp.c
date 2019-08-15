@@ -242,8 +242,8 @@ static int DCERPCUDPParseHeader(Flow *f, void *dcerpcudp_state,
                         sstate->dcerpc.dcerpchdrudp.seqnum |= (uint32_t) *(p + 65) << 16;
                         sstate->dcerpc.dcerpchdrudp.seqnum |= (uint32_t) *(p + 66) << 8;
                         sstate->dcerpc.dcerpchdrudp.seqnum |= (uint32_t) *(p + 67);
-                        sstate->dcerpc.dcerpchdrudp.opnum = *(p + 68) << 24;
-                        sstate->dcerpc.dcerpchdrudp.opnum |= *(p + 69) << 16;
+                        sstate->dcerpc.dcerpchdrudp.opnum = *(p + 68) << 8;
+                        sstate->dcerpc.dcerpchdrudp.opnum |= *(p + 69);
                         sstate->dcerpc.dcerpchdrudp.ihint = *(p + 70) << 8;
                         sstate->dcerpc.dcerpchdrudp.ihint |= *(p + 71);
                         sstate->dcerpc.dcerpchdrudp.ahint = *(p + 72) << 8;
@@ -717,7 +717,7 @@ static int DCERPCUDPParseHeader(Flow *f, void *dcerpcudp_state,
 
 static int DCERPCUDPParse(Flow *f, void *dcerpc_state,
     AppLayerParserState *pstate, uint8_t *input, uint32_t input_len,
-    void *local_data)
+    void *local_data, const uint8_t flags)
 {
     uint32_t retval = 0;
     uint32_t parsed = 0;

@@ -35,6 +35,10 @@ void InspectionBufferCheckAndExpand(InspectionBuffer *buffer, uint32_t min_size)
 void InspectionBufferCopy(InspectionBuffer *buffer, uint8_t *buf, uint32_t buf_len);
 void InspectionBufferApplyTransforms(InspectionBuffer *buffer,
         const DetectEngineTransforms *transforms);
+void InspectionBufferClean(DetectEngineThreadCtx *det_ctx);
+InspectionBuffer *InspectionBufferGet(DetectEngineThreadCtx *det_ctx, const int list_id);
+InspectionBuffer *InspectionBufferMultipleForListGet(InspectionBufferMultipleForList *fb, uint32_t local_id);
+InspectionBufferMultipleForList *InspectionBufferGetMulti(DetectEngineThreadCtx *det_ctx, const int list_id);
 
 int DetectBufferTypeRegister(const char *name);
 int DetectBufferTypeGetByName(const char *name);
@@ -62,7 +66,8 @@ bool DetectBufferRunValidateCallback(const DetectEngineCtx *de_ctx, const int id
 /* prototypes */
 DetectEngineCtx *DetectEngineCtxInitWithPrefix(const char *prefix);
 DetectEngineCtx *DetectEngineCtxInit(void);
-DetectEngineCtx *DetectEngineCtxInitMinimal(void);
+DetectEngineCtx *DetectEngineCtxInitStubForDD(void);
+DetectEngineCtx *DetectEngineCtxInitStubForMT(void);
 void DetectEngineCtxFree(DetectEngineCtx *);
 
 int DetectRegisterThreadCtxGlobalFuncs(const char *name,
@@ -101,6 +106,7 @@ int DetectEngineReloadIsIdle(void);
 int DetectEngineLoadTenantBlocking(uint32_t tenant_id, const char *yaml);
 int DetectEngineReloadTenantBlocking(uint32_t tenant_id, const char *yaml, int reload_cnt);
 
+int DetectEngineTentantRegisterLivedev(uint32_t tenant_id, int device_id);
 int DetectEngineTentantRegisterVlanId(uint32_t tenant_id, uint16_t vlan_id);
 int DetectEngineTentantUnregisterVlanId(uint32_t tenant_id, uint16_t vlan_id);
 int DetectEngineTentantRegisterPcapFile(uint32_t tenant_id);
@@ -117,6 +123,11 @@ int DetectEngineInspectBufferGeneric(
         const DetectEngineAppInspectionEngine *engine,
         const Signature *s,
         Flow *f, uint8_t flags, void *alstate, void *txv, uint64_t tx_id);
+
+int DetectEngineInspectPktBufferGeneric(
+        DetectEngineThreadCtx *det_ctx,
+        const DetectEnginePktInspectionEngine *engine,
+        const Signature *s, Packet *p, uint8_t *alert_flags);
 
 /**
  * \brief Registers an app inspection engine.
@@ -136,8 +147,18 @@ void DetectAppLayerInspectEngineRegister2(const char *name,
         InspectEngineFuncPtr2 Callback2,
         InspectionBufferGetDataPtr GetData);
 
+void DetectPktInspectEngineRegister(const char *name,
+        InspectionBufferGetPktDataPtr GetPktData,
+        InspectionBufferPktInspectFunc Callback);
+
 int DetectEngineAppInspectionEngine2Signature(DetectEngineCtx *de_ctx, Signature *s);
 void DetectEngineAppInspectionEngineSignatureFree(Signature *s);
+
+bool DetectEnginePktInspectionRun(ThreadVars *tv,
+        DetectEngineThreadCtx *det_ctx, const Signature *s,
+        Flow *f, Packet *p,
+        uint8_t *alert_flags);
+int DetectEnginePktInspectionSetup(Signature *s);
 
 void DetectEngineSetParseMetadata(void);
 void DetectEngineUnsetParseMetadata(void);

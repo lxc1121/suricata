@@ -43,7 +43,7 @@ static pcre *parse_regex;
 static pcre_extra *parse_regex_study;
 
 static int DetectMarkSetup (DetectEngineCtx *, Signature *, const char *);
-static int DetectMarkPacket(ThreadVars *t, DetectEngineThreadCtx *det_ctx, Packet *p,
+static int DetectMarkPacket(DetectEngineThreadCtx *det_ctx, Packet *p,
         const Signature *s, const SigMatchCtx *ctx);
 void DetectMarkDataFree(void *ptr);
 
@@ -184,29 +184,25 @@ static void * DetectMarkParse (const char *rawstr)
  */
 static int DetectMarkSetup (DetectEngineCtx *de_ctx, Signature *s, const char *rawstr)
 {
-#ifdef NFQ
-    DetectMarkData *data = NULL;
-    SigMatch *sm = NULL;
-
-    data = DetectMarkParse(rawstr);
-
+#ifndef NFQ
+    return 0;
+#else
+    DetectMarkData *data = DetectMarkParse(rawstr);
     if (data == NULL) {
         return -1;
-    } else {
-        sm = SigMatchAlloc();
-        if (sm == NULL) {
-            DetectMarkDataFree(data);
-            return -1;
-        }
-
-        sm->type = DETECT_MARK;
-        sm->ctx = (SigMatchCtx *)data;
-
-        /* Append it to the list of tags */
-        SigMatchAppendSMToList(s, sm, DETECT_SM_LIST_TMATCH);
-        return 0;
     }
-#else
+    SigMatch *sm = SigMatchAlloc();
+    if (sm == NULL) {
+        DetectMarkDataFree(data);
+        return -1;
+    }
+
+    sm->type = DETECT_MARK;
+    sm->ctx = (SigMatchCtx *)data;
+
+    /* Append it to the list of post match, so the mark is set if the
+     * full signature matches. */
+    SigMatchAppendSMToList(s, sm, DETECT_SM_LIST_POSTMATCH);
     return 0;
 #endif
 }
@@ -218,7 +214,7 @@ void DetectMarkDataFree(void *ptr)
 }
 
 
-static int DetectMarkPacket(ThreadVars *t, DetectEngineThreadCtx *det_ctx, Packet *p,
+static int DetectMarkPacket(DetectEngineThreadCtx *det_ctx, Packet *p,
         const Signature *s, const SigMatchCtx *ctx)
 {
 #ifdef NFQ

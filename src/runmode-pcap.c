@@ -32,11 +32,9 @@
 #include "util-atomic.h"
 #include "util-misc.h"
 
-static const char *default_mode = NULL;
-
 const char *RunModeIdsGetDefaultMode(void)
 {
-    return default_mode;
+    return "autofp";
 }
 
 int RunModeIdsPcapWorkers(void);
@@ -46,7 +44,6 @@ void RunModeIdsPcapRegister(void)
     RunModeRegisterNewRunMode(RUNMODE_PCAP_DEV, "single",
                               "Single threaded pcap live mode",
                               RunModeIdsPcapSingle);
-    default_mode = "autofp";
     RunModeRegisterNewRunMode(RUNMODE_PCAP_DEV, "autofp",
                               "Multi threaded pcap live mode.  Packets from "
                               "each flow are assigned to a single detect thread, "
@@ -99,8 +96,14 @@ static void *ParsePcapConfig(const char *iface)
     aconf->buffer_size = 0;
     /* If set command line option has precedence over config */
     if ((ConfGetInt("pcap.buffer-size", &value)) == 1) {
-        SCLogInfo("Pcap will use %d buffer size", (int)value);
-        aconf->buffer_size = value;
+        if (value >= 0 && value <= INT_MAX) {
+            SCLogInfo("Pcap will use %d buffer size", (int)value);
+            aconf->buffer_size = value;
+        } else {
+            SCLogWarning(SC_ERR_INVALID_ARGUMENT, "pcap.buffer-size "
+                    "value of %"PRIiMAX" is invalid. Valid range is "
+                    "0-2147483647", value);
+        }
     }
 
     aconf->checksum_mode = CHECKSUM_VALIDATION_AUTO;

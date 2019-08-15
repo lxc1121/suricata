@@ -66,7 +66,7 @@
 static pcre *parse_regex;
 static pcre_extra *parse_regex_study;
 
-static int DetectSshSoftwareVersionMatch (ThreadVars *, DetectEngineThreadCtx *,
+static int DetectSshSoftwareVersionMatch (DetectEngineThreadCtx *,
         Flow *, uint8_t, void *, void *,
         const Signature *, const SigMatchCtx *);
 static int DetectSshSoftwareVersionSetup (DetectEngineCtx *, Signature *, const char *);
@@ -90,11 +90,14 @@ static int InspectSshBanner(ThreadVars *tv,
 void DetectSshSoftwareVersionRegister(void)
 {
     sigmatch_table[DETECT_AL_SSH_SOFTWAREVERSION].name = "ssh.softwareversion";
+    sigmatch_table[DETECT_AL_SSH_SOFTWAREVERSION].desc = "match SSH software string";
+    sigmatch_table[DETECT_AL_SSH_SOFTWAREVERSION].url = DOC_URL DOC_VERSION "/rules/ssh-keywords.html#ssh-softwareversion";
     sigmatch_table[DETECT_AL_SSH_SOFTWAREVERSION].AppLayerTxMatch = DetectSshSoftwareVersionMatch;
     sigmatch_table[DETECT_AL_SSH_SOFTWAREVERSION].Setup = DetectSshSoftwareVersionSetup;
     sigmatch_table[DETECT_AL_SSH_SOFTWAREVERSION].Free  = DetectSshSoftwareVersionFree;
     sigmatch_table[DETECT_AL_SSH_SOFTWAREVERSION].RegisterTests = DetectSshSoftwareVersionRegisterTests;
-    sigmatch_table[DETECT_AL_SSH_SOFTWAREVERSION].flags = SIGMATCH_QUOTES_OPTIONAL;
+    sigmatch_table[DETECT_AL_SSH_SOFTWAREVERSION].flags = SIGMATCH_QUOTES_OPTIONAL|SIGMATCH_INFO_DEPRECATED;
+    sigmatch_table[DETECT_AL_SSH_SOFTWAREVERSION].alternative = DETECT_AL_SSH_SOFTWARE;
 
     DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
 
@@ -119,7 +122,7 @@ void DetectSshSoftwareVersionRegister(void)
  * \retval 0 no match
  * \retval 1 match
  */
-static int DetectSshSoftwareVersionMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectSshSoftwareVersionMatch (DetectEngineThreadCtx *det_ctx,
         Flow *f, uint8_t flags, void *state, void *txv,
         const Signature *s, const SigMatchCtx *m)
 {

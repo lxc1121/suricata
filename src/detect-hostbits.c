@@ -61,14 +61,14 @@ TODO:
     hostbits:set,bitname,both,120;
  */
 
-#define PARSE_REGEX "([a-z]+)"          /* Action */                    \
+#define PARSE_REGEX "^([a-z]+)"          /* Action */                    \
     "(?:\\s*,\\s*([^\\s,]+))?(?:\\s*)?" /* Name. */                     \
     "(?:\\s*,\\s*([^,\\s]+))?(?:\\s*)?" /* Direction. */                \
     "(.+)?"                             /* Any remainding data. */
 static pcre *parse_regex;
 static pcre_extra *parse_regex_study;
 
-static int DetectHostbitMatch (ThreadVars *, DetectEngineThreadCtx *, Packet *,
+static int DetectHostbitMatch (DetectEngineThreadCtx *, Packet *,
         const Signature *, const SigMatchCtx *);
 static int DetectHostbitSetup (DetectEngineCtx *, Signature *, const char *);
 void DetectHostbitFree (void *);
@@ -266,7 +266,7 @@ int DetectXbitMatchHost(Packet *p, const DetectXbitsData *xd)
  *        -1: error
  */
 
-static int DetectHostbitMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx, Packet *p,
+static int DetectHostbitMatch (DetectEngineThreadCtx *det_ctx, Packet *p,
         const Signature *s, const SigMatchCtx *ctx)
 {
     const DetectXbitsData *xd = (const DetectXbitsData *)ctx;
@@ -418,6 +418,11 @@ int DetectHostbitSetup (DetectEngineCtx *de_ctx, Signature *s, const char *rawst
             /* modifiers, only run when entire sig has matched */
             SigMatchAppendSMToList(s, sm, DETECT_SM_LIST_POSTMATCH);
             break;
+
+        // suppress coverity warning as scan-build-7 warns w/o this.
+        // coverity[deadcode : FALSE]
+        default:
+            goto error;
     }
 
     return 0;
@@ -613,6 +618,10 @@ static int HostBitsTestSig02(void)
     s = DetectEngineAppendSig(de_ctx,
             "alert ip any any -> any any (hostbits:isnotset,abc,dst; content:\"GET \"; sid:2;)");
     FAIL_IF_NULL(s);
+
+    s = DetectEngineAppendSig(de_ctx,
+            "alert ip any any -> any any (hostbits:!isset,abc,dst; content:\"GET \"; sid:3;)");
+    FAIL_IF_NOT_NULL(s);
 
 /* TODO reenable after both is supported
     s = DetectEngineAppendSig(de_ctx,

@@ -41,6 +41,13 @@ void CleanupPcapFileFileVars(PcapFileFileVars *pfv)
             pfv->pcap_handle = NULL;
         }
         if (pfv->filename != NULL) {
+            if (pfv->shared != NULL && pfv->shared->should_delete) {
+                SCLogDebug("Deleting pcap file %s", pfv->filename);
+                if (unlink(pfv->filename) != 0) {
+                    SCLogWarning(SC_ERR_PCAP_FILE_DELETE_FAILED,
+                                 "Failed to delete %s", pfv->filename);
+                }
+            }
             SCFree(pfv->filename);
             pfv->filename = NULL;
         }
@@ -165,12 +172,7 @@ TmEcode InitPcapFile(PcapFileFileVars *pfv)
     pfv->pcap_handle = pcap_open_offline(pfv->filename, errbuf);
     if (pfv->pcap_handle == NULL) {
         SCLogError(SC_ERR_FOPEN, "%s", errbuf);
-        if (!RunModeUnixSocketIsActive()) {
-            SCReturnInt(TM_ECODE_FAILED);
-        } else {
-            UnixSocketPcapFile(TM_ECODE_FAILED, 0);
-            SCReturnInt(TM_ECODE_DONE);
-        }
+        SCReturnInt(TM_ECODE_FAILED);
     }
 
     if (pfv->shared != NULL && pfv->shared->bpf_string != NULL) {

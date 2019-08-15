@@ -27,6 +27,8 @@
 #include "suricata-common.h"
 #include "util-random.h"
 
+
+#if !(defined(HAVE_WINCRYPT_H) &&  defined(OS_WIN32))
 #if defined(HAVE_CLOCK_GETTIME)
 
 static long int RandomGetClock(void)
@@ -34,12 +36,13 @@ static long int RandomGetClock(void)
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
 
+    // coverity[dont_call : FALSE]
     srandom(ts.tv_nsec ^ ts.tv_sec);
     long int value = random();
     return value;
 }
 
-#elif !(defined(HAVE_WINCRYPT_H) &&  defined(OS_WIN32))
+#else
 
 static long int RandomGetPosix(void)
 {
@@ -47,12 +50,14 @@ static long int RandomGetPosix(void)
     memset(&tv, 0, sizeof(tv));
     gettimeofday(&tv, NULL);
 
+    // coverity[dont_call : FALSE]
     srandom(tv.tv_usec ^ tv.tv_sec);
     long int value = random();
     return value;
 }
 
 #endif
+#endif /* !(defined(HAVE_WINCRYPT_H) &&  defined(OS_WIN32)) */
 
 #if defined(HAVE_WINCRYPT_H) && defined(OS_WIN32)
 #include <wincrypt.h>
@@ -63,9 +68,21 @@ long int RandomGet(void)
         return 0;
 
     HCRYPTPROV p;
-    if (!(CryptAcquireContext(&p, NULL, NULL,
-                PROV_RSA_FULL, 0))) {
-        return -1;
+    if (!CryptAcquireContext(&p, NULL, NULL, PROV_RSA_FULL, 0)) {
+        DWORD err = GetLastError();
+        SCLogDebug("CryptAcquireContext error: %" PRIu32, (uint32_t)err);
+        if (err == (DWORD)NTE_BAD_KEYSET) {
+            /* The key doesn't exist yet, create it */
+            if (!CryptAcquireContext(&p, NULL, NULL, PROV_RSA_FULL,
+                                     CRYPT_NEWKEYSET)) {
+
+                SCLogDebug("CryptAcquireContext error: %" PRIu32,
+                           (uint32_t)err);
+                return -1;
+            }
+        } else {
+            return -1;
+        }
     }
 
     long int value = 0;

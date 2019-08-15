@@ -55,13 +55,11 @@
 
 typedef struct LogIKEv2FileCtx_ {
     LogFileCtx *file_ctx;
-    uint32_t    flags;
-    bool        include_metadata;
+    OutputJsonCommonSettings cfg;
 } LogIKEv2FileCtx;
 
 typedef struct LogIKEv2LogThread_ {
     LogIKEv2FileCtx *ikev2log_ctx;
-    uint32_t            count;
     MemBuffer          *buffer;
 } LogIKEv2LogThread;
 
@@ -77,9 +75,7 @@ static int JsonIKEv2Logger(ThreadVars *tv, void *thread_data,
         return TM_ECODE_FAILED;
     }
 
-    if (thread->ikev2log_ctx->include_metadata) {
-        JsonAddMetadata(p, f, js);
-    }
+    JsonAddCommonOptions(&thread->ikev2log_ctx->cfg, p, f, js);
 
     ikev2js = rs_ikev2_log_json_response(state, ikev2tx);
     if (unlikely(ikev2js == NULL)) {
@@ -116,7 +112,7 @@ static OutputInitResult OutputIKEv2LogInitSub(ConfNode *conf,
         return result;
     }
     ikev2log_ctx->file_ctx = ajt->file_ctx;
-    ikev2log_ctx->include_metadata = ajt->include_metadata;
+    ikev2log_ctx->cfg = ajt->cfg;
 
     OutputCtx *output_ctx = SCCalloc(1, sizeof(*output_ctx));
     if (unlikely(output_ctx == NULL)) {
@@ -135,8 +131,6 @@ static OutputInitResult OutputIKEv2LogInitSub(ConfNode *conf,
     return result;
 }
 
-#define OUTPUT_BUFFER_SIZE 65535
-
 static TmEcode JsonIKEv2LogThreadInit(ThreadVars *t, const void *initdata, void **data)
 {
     LogIKEv2LogThread *thread = SCCalloc(1, sizeof(*thread));
@@ -150,7 +144,7 @@ static TmEcode JsonIKEv2LogThreadInit(ThreadVars *t, const void *initdata, void 
         return TM_ECODE_FAILED;
     }
 
-    thread->buffer = MemBufferCreateNew(OUTPUT_BUFFER_SIZE);
+    thread->buffer = MemBufferCreateNew(JSON_OUTPUT_BUFFER_SIZE);
     if (unlikely(thread->buffer == NULL)) {
         SCFree(thread);
         return TM_ECODE_FAILED;

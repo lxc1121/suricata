@@ -57,7 +57,7 @@ SC_ATOMIC_EXTERN(unsigned int, num_tags);
 static pcre *parse_regex;
 static pcre_extra *parse_regex_study;
 
-static int DetectTagMatch(ThreadVars *, DetectEngineThreadCtx *, Packet *,
+static int DetectTagMatch(DetectEngineThreadCtx *, Packet *,
         const Signature *, const SigMatchCtx *);
 static int DetectTagSetup(DetectEngineCtx *, Signature *, const char *);
 void DetectTagRegisterTests(void);
@@ -89,7 +89,7 @@ void DetectTagRegister(void)
  * \retval 0 no match
  * \retval 1 match
  */
-static int DetectTagMatch(ThreadVars *t, DetectEngineThreadCtx *det_ctx, Packet *p,
+static int DetectTagMatch(DetectEngineThreadCtx *det_ctx, Packet *p,
         const Signature *s, const SigMatchCtx *ctx)
 {
     const DetectTagData *td = (const DetectTagData *)ctx;
@@ -283,29 +283,22 @@ error:
  */
 int DetectTagSetup(DetectEngineCtx *de_ctx, Signature *s, const char *tagstr)
 {
-    DetectTagData *td = NULL;
-    SigMatch *sm = NULL;
+    DetectTagData *td = DetectTagParse(tagstr);
+    if (td == NULL)
+        return -1;
 
-    td = DetectTagParse(tagstr);
-    if (td == NULL) goto error;
-
-    sm = SigMatchAlloc();
-    if (sm == NULL)
-        goto error;
+    SigMatch *sm = SigMatchAlloc();
+    if (sm == NULL) {
+        DetectTagDataFree(td);
+        return -1;
+    }
 
     sm->type = DETECT_TAG;
     sm->ctx = (SigMatchCtx *)td;
 
     /* Append it to the list of tags */
     SigMatchAppendSMToList(s, sm, DETECT_SM_LIST_TMATCH);
-
     return 0;
-
-error:
-    if (td != NULL) DetectTagDataFree(td);
-    if (sm != NULL) SCFree(sm);
-    return -1;
-
 }
 
 /** \internal

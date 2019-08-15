@@ -135,7 +135,6 @@ static int HashMatchHashTable(ROHashTable *hash_table, uint8_t *hash,
 /**
  * \brief Match the specified file hash
  *
- * \param t thread local vars
  * \param det_ctx pattern matcher thread local data
  * \param f *LOCKED* flow
  * \param flags direction flags
@@ -146,7 +145,7 @@ static int HashMatchHashTable(ROHashTable *hash_table, uint8_t *hash,
  * \retval 0 no match
  * \retval 1 match
  */
-int DetectFileHashMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+int DetectFileHashMatch (DetectEngineThreadCtx *det_ctx,
         Flow *f, uint8_t flags, File *file, const Signature *s, const SigMatchCtx *m)
 {
     SCEnter();
@@ -239,8 +238,27 @@ static DetectFileHashData *DetectFileHashParse (const DetectEngineCtx *de_ctx,
     char line[8192] = "";
     fp = fopen(filename, "r");
     if (fp == NULL) {
-        SCLogError(SC_ERR_OPENING_RULE_FILE, "opening hash file %s: %s", filename, strerror(errno));
-        goto error;
+#ifdef HAVE_LIBGEN_H
+        if (de_ctx->rule_file != NULL) {
+            char *dir = dirname(de_ctx->rule_file);
+            if (dir != NULL) {
+                char path[PATH_MAX];
+                snprintf(path, sizeof(path), "%s/%s", dir, str);
+                fp = fopen(path, "r");
+                if (fp == NULL) {
+                    SCLogError(SC_ERR_OPENING_RULE_FILE,
+                            "opening hash file %s: %s", path, strerror(errno));
+                    goto error;
+                }
+            }
+        }
+        if (fp == NULL) {
+#endif
+            SCLogError(SC_ERR_OPENING_RULE_FILE, "opening hash file %s: %s", filename, strerror(errno));
+            goto error;
+#ifdef HAVE_LIBGEN_H
+        }
+#endif
     }
 
     int line_no = 0;

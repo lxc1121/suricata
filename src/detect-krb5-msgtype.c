@@ -42,7 +42,7 @@ static pcre *parse_regex;
 static pcre_extra *parse_regex_study;
 
 /* Prototypes of functions registered in DetectKrb5MsgTypeRegister below */
-static int DetectKrb5MsgTypeMatch (ThreadVars *, DetectEngineThreadCtx *, Flow *,
+static int DetectKrb5MsgTypeMatch (DetectEngineThreadCtx *, Flow *,
                                    uint8_t, void *, void *, const Signature *,
                                    const SigMatchCtx *);
 static int DetectKrb5MsgTypeSetup (DetectEngineCtx *, Signature *, const char *);
@@ -108,7 +108,7 @@ static int DetectEngineInspectKRB5Generic(ThreadVars *tv,
  * \retval 0 no match
  * \retval 1 match
  */
-static int DetectKrb5MsgTypeMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectKrb5MsgTypeMatch (DetectEngineThreadCtx *det_ctx,
                                    Flow *f, uint8_t flags, void *state,
                                    void *txv, const Signature *s,
                                    const SigMatchCtx *ctx)
@@ -199,7 +199,6 @@ static int DetectKrb5MsgTypeSetup (DetectEngineCtx *de_ctx, Signature *s, const 
     sm->type = DETECT_AL_KRB5_MSGTYPE;
     sm->ctx = (void *)krb5d;
 
-    s->flags |= SIG_FLAG_STATE_MATCH;
     SigMatchAppendSMToList(s, sm, g_krb5_msg_type_list_id);
 
     return 0;

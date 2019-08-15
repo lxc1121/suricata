@@ -93,7 +93,9 @@
 
 #include "source-af-packet.h"
 #include "source-netmap.h"
-#include "source-mpipe.h"
+
+#include "source-windivert.h"
+#include "source-windivert-prototypes.h"
 
 #include "respond-reject.h"
 
@@ -121,10 +123,11 @@
 #include "app-layer-ssh.h"
 #include "app-layer-ftp.h"
 #include "app-layer-smtp.h"
-#include "app-layer-smb.h"
 #include "app-layer-modbus.h"
 #include "app-layer-enip.h"
 #include "app-layer-dnp3.h"
+#include "app-layer-smb.h"
+#include "app-layer-dcerpc.h"
 
 #include "util-decode-der.h"
 #include "util-ebpf.h"
@@ -226,6 +229,10 @@ int g_disable_randomness = 0;
 #else
 int g_disable_randomness = 1;
 #endif
+
+/** determine (without branching) if we include the vlan_ids when hashing or
+  * comparing flows */
+uint16_t g_vlan_mask = 0xffff;
 
 /** Suricata instance */
 SCInstance suricata;
@@ -390,6 +397,10 @@ static void GlobalsDestroy(SCInstance *suri)
     AFPPeersListClean();
 #endif
 
+#ifdef NFQ
+    NFQContextsClean();
+#endif
+
     SC_ATOMIC_DESTROY(engine_stage);
 
 #ifdef BUILD_HYPERSCAN
@@ -405,6 +416,8 @@ static void GlobalsDestroy(SCInstance *suri)
     SCThresholdConfGlobalFree();
 
     SCPidfileRemove(suri->pid_filename);
+    SCFree(suri->pid_filename);
+    suri->pid_filename = NULL;
 }
 
 /** \brief make sure threads can stop the engine by calling this
@@ -506,6 +519,7 @@ static void SetBpfStringFromFile(char *filename)
     }
     bpf_len = st.st_size + 1;
 
+    // coverity[toctou : FALSE]
     fp = fopen(filename,"r");
     if (fp == NULL) {
         SCLogError(SC_ERR_FOPEN, "Failed to open file %s", filename);
@@ -567,7 +581,7 @@ static void SetBpfStringFromFile(char *filename)
 static void PrintUsage(const char *progname)
 {
 #ifdef REVISION
-    printf("%s %s (rev %s)\n", PROG_NAME, PROG_VER, xstr(REVISION));
+    printf("%s %s (%s)\n", PROG_NAME, PROG_VER, xstr(REVISION));
 #else
     printf("%s %s\n", PROG_NAME, PROG_VER);
 #endif
@@ -578,7 +592,7 @@ static void PrintUsage(const char *progname)
     printf("\t-F <bpf filter file>                 : bpf filter file\n");
     printf("\t-r <path>                            : run in pcap file/offline mode\n");
 #ifdef NFQ
-    printf("\t-q <qid>                             : run in inline nfqueue mode\n");
+    printf("\t-q <qid[:qid]>                       : run in inline nfqueue mode (use colon to specify a range of queues)\n");
 #endif /* NFQ */
 #ifdef IPFW
     printf("\t-d <divert port>                     : run in inline ipfw divert mode\n");
@@ -619,6 +633,7 @@ static void PrintUsage(const char *progname)
     printf("\t--build-info                         : display build information\n");
     printf("\t--pcap[=<dev>]                       : run in pcap mode, no value select interfaces from suricata.yaml\n");
     printf("\t--pcap-file-continuous               : when running in pcap mode with a directory, continue checking directory for pcaps until interrupted\n");
+    printf("\t--pcap-file-delete                   : when running in replay mode (-r with directory or file), will delete pcap files that have been processed when done\n");
 #ifdef HAVE_PCAP_SET_BUFF
     printf("\t--pcap-buffer-size                   : size of the pcap buffer value from 0 - %i\n",INT_MAX);
 #endif /* HAVE_SET_PCAP_BUFF */
@@ -649,8 +664,9 @@ static void PrintUsage(const char *progname)
 #ifdef BUILD_UNIX_SOCKET
     printf("\t--unix-socket[=<file>]               : use unix socket to control suricata work\n");
 #endif
-#ifdef HAVE_MPIPE
-    printf("\t--mpipe                              : run with tilegx mpipe interface(s)\n");
+#ifdef WINDIVERT
+    printf("\t--windivert <filter>                 : run in inline WinDivert mode\n");
+    printf("\t--windivert-forward <filter>         : run in inline WinDivert mode, as a gateway\n");
 #endif
     printf("\t--set name=value                     : set a configuration value\n");
     printf("\n");
@@ -668,7 +684,7 @@ static void PrintBuildInfo(void)
     const char *tls = "pthread key";
 
 #ifdef REVISION
-    printf("This is %s version %s (rev %s)\n", PROG_NAME, PROG_VER, xstr(REVISION));
+    printf("This is %s version %s (%s)\n", PROG_NAME, PROG_VER, xstr(REVISION));
 #elif defined RELEASE
     printf("This is %s version %s RELEASE\n", PROG_NAME, PROG_VER);
 #else
@@ -764,9 +780,6 @@ static void PrintBuildInfo(void)
 #if defined(__SSE3__)
     strlcat(features, "SSE_3 ", sizeof(features));
 #endif
-#if defined(__tile__)
-    strlcat(features, "Tilera ", sizeof(features));
-#endif
     if (strlen(features) == 0) {
         strlcat(features, "none", sizeof(features));
     }
@@ -855,6 +868,9 @@ int g_ut_covered;
 
 void RegisterAllModules(void)
 {
+    // zero all module storage
+    memset(tmm_modules, 0, TMM_SIZE * sizeof(TmModule));
+
     /* commanders */
     TmModuleUnixManagerRegister();
     /* managers */
@@ -875,11 +891,6 @@ void RegisterAllModules(void)
     /* pcap file */
     TmModuleReceivePcapFileRegister();
     TmModuleDecodePcapFileRegister();
-#ifdef HAVE_MPIPE
-    /* mpipe */
-    TmModuleReceiveMpipeRegister();
-    TmModuleDecodeMpipeRegister();
-#endif
     /* af-packet */
     TmModuleReceiveAFPRegister();
     TmModuleDecodeAFPRegister();
@@ -912,6 +923,11 @@ void RegisterAllModules(void)
     /* nflog */
     TmModuleReceiveNFLOGRegister();
     TmModuleDecodeNFLOGRegister();
+
+    /* windivert */
+    TmModuleReceiveWinDivertRegister();
+    TmModuleVerdictWinDivertRegister();
+    TmModuleDecodeWinDivertRegister();
 }
 
 static TmEcode LoadYamlConfig(SCInstance *suri)
@@ -929,7 +945,7 @@ static TmEcode LoadYamlConfig(SCInstance *suri)
     SCReturnInt(TM_ECODE_OK);
 }
 
-static TmEcode ParseInterfacesList(int runmode, char *pcap_dev)
+static TmEcode ParseInterfacesList(const int runmode, char *pcap_dev)
 {
     SCEnter();
 
@@ -942,21 +958,6 @@ static TmEcode ParseInterfacesList(int runmode, char *pcap_dev)
                 SCReturnInt(TM_ECODE_FAILED);
             }
         }
-#ifdef HAVE_MPIPE
-    } else if (runmode == RUNMODE_TILERA_MPIPE) {
-        if (strlen(pcap_dev)) {
-            if (ConfSetFinal("mpipe.single_mpipe_dev", pcap_dev) != 1) {
-                fprintf(stderr, "ERROR: Failed to set mpipe.single_mpipe_dev\n");
-                SCReturnInt(TM_ECODE_FAILED);
-            }
-        } else {
-            int ret = LiveBuildDeviceList("mpipe.inputs");
-            if (ret == 0) {
-                fprintf(stderr, "ERROR: No interface found in config for mpipe\n");
-                SCReturnInt(TM_ECODE_FAILED);
-            }
-        }
-#endif
     } else if (runmode == RUNMODE_PFRING) {
         /* FIXME add backward compat support */
         /* iface has been set on command line */
@@ -983,10 +984,6 @@ static TmEcode ParseInterfacesList(int runmode, char *pcap_dev)
                 SCLogError(SC_ERR_INITIALIZATION, "No interface found in config for af-packet");
                 SCReturnInt(TM_ECODE_FAILED);
             }
-            if (AFPRunModeIsIPS()) {
-                SCLogInfo("AF_PACKET: Setting IPS mode");
-                EngineModeSetIPS();
-            }
         }
 #endif
 #ifdef HAVE_NETMAP
@@ -1002,10 +999,6 @@ static TmEcode ParseInterfacesList(int runmode, char *pcap_dev)
             if (ret == 0) {
                 SCLogError(SC_ERR_INITIALIZATION, "No interface found in config for netmap");
                 SCReturnInt(TM_ECODE_FAILED);
-            }
-            if (NetmapRunModeIsIPS()) {
-                SCLogInfo("Netmap: Setting IPS mode");
-                EngineModeSetIPS();
             }
         }
 #endif
@@ -1061,7 +1054,7 @@ static void SCInstanceInit(SCInstance *suri, const char *progname)
 static TmEcode PrintVersion(void)
 {
 #ifdef REVISION
-    printf("This is %s version %s (rev %s)\n", PROG_NAME, PROG_VER, xstr(REVISION));
+    printf("This is %s version %s (%s)\n", PROG_NAME, PROG_VER, xstr(REVISION));
 #elif defined RELEASE
     printf("This is %s version %s RELEASE\n", PROG_NAME, PROG_VER);
 #else
@@ -1070,14 +1063,18 @@ static TmEcode PrintVersion(void)
     return TM_ECODE_OK;
 }
 
-static TmEcode LogVersion(void)
+static TmEcode LogVersion(SCInstance *suri)
 {
+    const char *mode = suri->system ? "SYSTEM" : "USER";
 #ifdef REVISION
-    SCLogNotice("This is %s version %s (rev %s)", PROG_NAME, PROG_VER, xstr(REVISION));
+    SCLogNotice("This is %s version %s (%s) running in %s mode",
+            PROG_NAME, PROG_VER, xstr(REVISION), mode);
 #elif defined RELEASE
-    SCLogNotice("This is %s version %s RELEASE", PROG_NAME, PROG_VER);
+    SCLogNotice("This is %s version %s RELEASE running in %s mode",
+            PROG_NAME, PROG_VER, mode);
 #else
-    SCLogNotice("This is %s version %s", PROG_NAME, PROG_VER);
+    SCLogNotice("This is %s version %s running in %s mode",
+            PROG_NAME, PROG_VER, mode);
 #endif
     return TM_ECODE_OK;
 }
@@ -1111,8 +1108,6 @@ static int ParseCommandLineAfpacket(SCInstance *suri, const char *in_arg)
             strlcpy(suri->pcap_dev, in_arg, sizeof(suri->pcap_dev));
         }
     } else if (suri->run_mode == RUNMODE_AFP_DEV) {
-        SCLogWarning(SC_WARN_PCAP_MULTI_DEV_EXPERIMENTAL, "using "
-                "multiple devices to get packets is experimental.");
         if (in_arg) {
             LiveRegisterDeviceName(in_arg);
         } else {
@@ -1161,15 +1156,7 @@ static int ParseCommandLinePcapLive(SCInstance *suri, const char *in_arg)
             LiveRegisterDeviceName(suri->pcap_dev);
         }
     } else if (suri->run_mode == RUNMODE_PCAP_DEV) {
-#ifdef OS_WIN32
-        SCLogError(SC_ERR_PCAP_MULTI_DEV_NO_SUPPORT, "pcap multi dev "
-                "support is not (yet) supported on Windows.");
-        return TM_ECODE_FAILED;
-#else
-        SCLogWarning(SC_WARN_PCAP_MULTI_DEV_EXPERIMENTAL, "using "
-                "multiple pcap devices to get packets is experimental.");
         LiveRegisterDeviceName(suri->pcap_dev);
-#endif
     } else {
         SCLogError(SC_ERR_MULTIPLE_RUN_MODE, "more than one run mode "
                 "has been specified");
@@ -1261,6 +1248,7 @@ static void ParseCommandLineAFL(const char *opt_name, char *opt_arg)
 
     } else if(strcmp(opt_name, "afl-ftp-request") == 0) {
         //printf("arg: //%s\n", opt_arg);
+        IPPairInitConfig(FLOW_QUIET);
         MpmTableSetup();
         SpmTableSetup();
         AppLayerProtoDetectSetup();
@@ -1269,6 +1257,7 @@ static void ParseCommandLineAFL(const char *opt_name, char *opt_arg)
         exit(AppLayerParserRequestFromFile(IPPROTO_TCP, ALPROTO_FTP, opt_arg));
     } else if(strcmp(opt_name, "afl-ftp") == 0) {
         //printf("arg: //%s\n", opt_arg);
+        IPPairInitConfig(FLOW_QUIET);
         MpmTableSetup();
         SpmTableSetup();
         AppLayerProtoDetectSetup();
@@ -1440,7 +1429,6 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
     int conf_test_force_success = 0;
 #endif
     int engine_analysis = 0;
-    int set_log_directory = 0;
     int ret = TM_ECODE_OK;
 
 #ifdef UNITTESTS
@@ -1459,6 +1447,7 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
         {"netmap", optional_argument, 0, 0},
         {"pcap", optional_argument, 0, 0},
         {"pcap-file-continuous", 0, 0, 0},
+        {"pcap-file-delete", 0, 0, 0},
         {"simulate-ips", 0, 0 , 0},
         {"no-random", 0, &g_disable_randomness, 1},
 
@@ -1531,8 +1520,9 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
         {"dag", required_argument, 0, 0},
         {"napatech", 0, 0, 0},
         {"build-info", 0, &build_info, 1},
-#ifdef HAVE_MPIPE
-        {"mpipe", optional_argument, 0, 0},
+#ifdef WINDIVERT
+        {"windivert", required_argument, 0, 0},
+        {"windivert-forward", required_argument, 0, 0},
 #endif
         {"set", required_argument, 0, 0},
 #ifdef HAVE_NFLOG
@@ -1610,8 +1600,6 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                                  (strlen(optarg) + 1) : sizeof(suri->pcap_dev)));
                     }
                 } else if (suri->run_mode == RUNMODE_NETMAP) {
-                    SCLogWarning(SC_WARN_PCAP_MULTI_DEV_EXPERIMENTAL, "using "
-                            "multiple devices to get packets is experimental.");
                     if (optarg) {
                         LiveRegisterDeviceName(optarg);
                     } else {
@@ -1710,11 +1698,15 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
             }
 #endif /* OS_WIN32 */
             else if(strcmp((long_opts[option_index]).name, "pidfile") == 0) {
-                suri->pid_filename = optarg;
+                suri->pid_filename = SCStrdup(optarg);
+                if (suri->pid_filename == NULL) {
+                    SCLogError(SC_ERR_MEM_ALLOC, "strdup failed: %s",
+                        strerror(errno));
+                    return TM_ECODE_FAILED;
+                }
             }
             else if(strcmp((long_opts[option_index]).name, "disable-detection") == 0) {
                 g_detect_disabled = suri->disabled_detect = 1;
-                SCLogInfo("detection engine disabled");
             }
             else if(strcmp((long_opts[option_index]).name, "fatal-unittests") == 0) {
 #ifdef UNITTESTS
@@ -1793,25 +1785,45 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                 suri->run_mode = RUNMODE_PRINT_BUILDINFO;
                 return TM_ECODE_OK;
             }
-#ifdef HAVE_MPIPE
-            else if(strcmp((long_opts[option_index]).name , "mpipe") == 0) {
+            else if(strcmp((long_opts[option_index]).name, "windivert-forward") == 0) {
+#ifdef WINDIVERT
                 if (suri->run_mode == RUNMODE_UNKNOWN) {
-                    suri->run_mode = RUNMODE_TILERA_MPIPE;
-                    if (optarg != NULL) {
-                        memset(suri->pcap_dev, 0, sizeof(suri->pcap_dev));
-                        strlcpy(suri->pcap_dev, optarg,
-                                ((strlen(optarg) < sizeof(suri->pcap_dev)) ?
-                                 (strlen(optarg) + 1) : sizeof(suri->pcap_dev)));
-                        LiveRegisterDeviceName(optarg);
+                    suri->run_mode = RUNMODE_WINDIVERT;
+                    if (WinDivertRegisterQueue(true, optarg) == -1) {
+                        exit(EXIT_FAILURE);
+                    }
+                } else if (suri->run_mode == RUNMODE_WINDIVERT) {
+                    if (WinDivertRegisterQueue(true, optarg) == -1) {
+                        exit(EXIT_FAILURE);
                     }
                 } else {
-                    SCLogError(SC_ERR_MULTIPLE_RUN_MODE,
-                               "more than one run mode has been specified");
+                    SCLogError(SC_ERR_MULTIPLE_RUN_MODE, "more than one run mode "
+                                                        "has been specified");
                     PrintUsage(argv[0]);
                     exit(EXIT_FAILURE);
                 }
             }
-#endif
+            else if(strcmp((long_opts[option_index]).name, "windivert") == 0) {
+                if (suri->run_mode == RUNMODE_UNKNOWN) {
+                    suri->run_mode = RUNMODE_WINDIVERT;
+                    if (WinDivertRegisterQueue(false, optarg) == -1) {
+                        exit(EXIT_FAILURE);
+                    }
+                } else if (suri->run_mode == RUNMODE_WINDIVERT) {
+                    if (WinDivertRegisterQueue(false, optarg) == -1) {
+                        exit(EXIT_FAILURE);
+                    }
+                } else {
+                    SCLogError(SC_ERR_MULTIPLE_RUN_MODE, "more than one run mode "
+                                                        "has been specified");
+                    PrintUsage(argv[0]);
+                    exit(EXIT_FAILURE);
+                }
+#else
+                SCLogError(SC_ERR_WINDIVERT_NOSUPPORT,"WinDivert not enabled. Make sure to pass --enable-windivert to configure when building.");
+                return TM_ECODE_FAILED;
+#endif /* WINDIVERT */
+            }
             else if (strcmp((long_opts[option_index]).name, "set") == 0) {
                 if (optarg != NULL) {
                     /* Quick validation. */
@@ -1829,8 +1841,14 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                 }
             }
             else if (strcmp((long_opts[option_index]).name, "pcap-file-continuous") == 0) {
-                if(ConfSetFinal("pcap-file.continuous", "true") != 1) {
+                if (ConfSetFinal("pcap-file.continuous", "true") != 1) {
                     SCLogError(SC_ERR_CMD_LINE, "Failed to set pcap-file.continuous");
+                    return TM_ECODE_FAILED;
+                }
+            }
+            else if (strcmp((long_opts[option_index]).name, "pcap-file-delete") == 0) {
+                if (ConfSetFinal("pcap-file.delete-when-done", "true") != 1) {
+                    SCLogError(SC_ERR_CMD_LINE, "Failed to set pcap-file.delete-when-done");
                     return TM_ECODE_FAILED;
                 }
             }
@@ -1913,7 +1931,7 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                         "exist. Shutting down the engine.", optarg, optarg);
                 return TM_ECODE_FAILED;
             }
-            set_log_directory = 1;
+            suri->set_logdir = true;
 
             break;
         case 'q':
@@ -1921,10 +1939,10 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
             if (suri->run_mode == RUNMODE_UNKNOWN) {
                 suri->run_mode = RUNMODE_NFQ;
                 EngineModeSetIPS();
-                if (NFQRegisterQueue(optarg) == -1)
+                if (NFQParseAndRegisterQueues(optarg) == -1)
                     return TM_ECODE_FAILED;
             } else if (suri->run_mode == RUNMODE_NFQ) {
-                if (NFQRegisterQueue(optarg) == -1)
+                if (NFQParseAndRegisterQueues(optarg) == -1)
                     return TM_ECODE_FAILED;
             } else {
                 SCLogError(SC_ERR_MULTIPLE_RUN_MODE, "more than one run mode "
@@ -1967,8 +1985,18 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                 PrintUsage(argv[0]);
                 return TM_ECODE_FAILED;
             }
+#ifdef OS_WIN32
+            struct _stat buf;
+            if(_stat(optarg, &buf) != 0) {
+#else
+            struct stat buf;
+            if (stat(optarg, &buf) != 0) {
+#endif /* OS_WIN32 */
+                SCLogError(SC_ERR_INITIALIZATION, "ERROR: Pcap file does not exist\n");
+                return TM_ECODE_FAILED;
+            }
             if (ConfSetFinal("pcap-file.file", optarg) != 1) {
-                fprintf(stderr, "ERROR: Failed to set pcap-file.file\n");
+                SCLogError(SC_ERR_INITIALIZATION, "ERROR: Failed to set pcap-file.file\n");
                 return TM_ECODE_FAILED;
             }
 
@@ -2055,10 +2083,14 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
     }
 #endif
 
-    if ((suri->run_mode == RUNMODE_UNIX_SOCKET) && set_log_directory) {
-        SCLogError(SC_ERR_INITIALIZATION, "can't use -l and unix socket runmode at the same time");
+    if ((suri->run_mode == RUNMODE_UNIX_SOCKET) && suri->set_logdir) {
+        SCLogError(SC_ERR_INITIALIZATION,
+                "can't use -l and unix socket runmode at the same time");
         return TM_ECODE_FAILED;
     }
+
+    /* save the runmode from the commandline (if any) */
+    suri->aux_run_mode = suri->run_mode;
 
     if (list_app_layer_protocols)
         suri->run_mode = RUNMODE_LIST_APP_LAYERS;
@@ -2074,6 +2106,7 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
         suri->run_mode = RUNMODE_ENGINE_ANALYSIS;
 
     suri->offline = IsRunModeOffline(suri->run_mode);
+    suri->system = IsRunModeSystem(suri->run_mode);
 
     ret = SetBpfString(optind, argv);
     if (ret != TM_ECODE_OK)
@@ -2114,14 +2147,23 @@ static int WindowsInitService(int argc, char **argv)
 static int MayDaemonize(SCInstance *suri)
 {
     if (suri->daemon == 1 && suri->pid_filename == NULL) {
-        if (ConfGet("pid-file", &suri->pid_filename) == 1) {
-            SCLogInfo("Use pid file %s from config file.", suri->pid_filename);
+        const char *pid_filename;
+
+        if (ConfGet("pid-file", &pid_filename) == 1) {
+            SCLogInfo("Use pid file %s from config file.", pid_filename);
         } else {
-            suri->pid_filename = DEFAULT_PID_FILENAME;
+            pid_filename = DEFAULT_PID_FILENAME;
+        }
+        /* The pid file name may be in config memory, but is needed later. */
+        suri->pid_filename = SCStrdup(pid_filename);
+        if (suri->pid_filename == NULL) {
+            SCLogError(SC_ERR_MEM_ALLOC, "strdup failed: %s", strerror(errno));
+            return TM_ECODE_FAILED;
         }
     }
 
     if (suri->pid_filename != NULL && SCPidfileTestRunning(suri->pid_filename) != 0) {
+        SCFree(suri->pid_filename);
         suri->pid_filename = NULL;
         return TM_ECODE_FAILED;
     }
@@ -2132,6 +2174,7 @@ static int MayDaemonize(SCInstance *suri)
 
     if (suri->pid_filename != NULL) {
         if (SCPidfileCreate(suri->pid_filename) != 0) {
+            SCFree(suri->pid_filename);
             suri->pid_filename = NULL;
             SCLogError(SC_ERR_PIDFILE_DAEMON,
                     "Unable to create PID file, concurrent run of"
@@ -2223,8 +2266,9 @@ void PreRunPostPrivsDropInit(const int runmode)
     if (runmode == RUNMODE_UNIX_SOCKET)
         return;
 
+    StatsSetupPostConfigPreOutput();
     RunModeInitializeOutputs();
-    StatsSetupPostConfig();
+    StatsSetupPostConfigPostOutput();
 }
 
 /* clean up / shutdown code for both the main modes and for
@@ -2261,6 +2305,7 @@ void PostRunDeinit(const int runmode, struct timeval *start_time)
     /* mgt and ppt threads killed, we can run non thread-safe
      * shutdown functions */
     StatsReleaseResources();
+    DecodeUnregisterCounters();
     RunModeShutDown();
     FlowShutdown();
     IPPairShutdown();
@@ -2405,31 +2450,52 @@ static int ConfigGetCaptureValue(SCInstance *suri)
      * back on a sane default. */
     const char *temp_default_packet_size;
     if ((ConfGet("default-packet-size", &temp_default_packet_size)) != 1) {
+        int mtu = 0;
         int lthread;
         int nlive;
         int strip_trailing_plus = 0;
         switch (suri->run_mode) {
-            case RUNMODE_PCAP_DEV:
-            case RUNMODE_AFP_DEV:
+#ifdef WINDIVERT
+            case RUNMODE_WINDIVERT:
+                /* by default, WinDivert collects from all devices */
+                mtu = GetGlobalMTUWin32();
+
+                if (mtu > 0) {
+                    g_default_mtu = mtu;
+                    /* SLL_HEADER_LEN is the longest header + 8 for VLAN */
+                    default_packet_size = mtu + SLL_HEADER_LEN + 8;
+                    break;
+                }
+
+                g_default_mtu = DEFAULT_MTU;
+                default_packet_size = DEFAULT_PACKET_SIZE;
+                break;
+#endif /* WINDIVERT */
             case RUNMODE_NETMAP:
                 /* in netmap igb0+ has a special meaning, however the
                  * interface really is igb0 */
                 strip_trailing_plus = 1;
                 /* fall through */
+            case RUNMODE_PCAP_DEV:
+            case RUNMODE_AFP_DEV:
             case RUNMODE_PFRING:
                 nlive = LiveGetDeviceCount();
                 for (lthread = 0; lthread < nlive; lthread++) {
                     const char *live_dev = LiveGetDeviceName(lthread);
-                    char dev[32];
+                    char dev[128]; /* need to be able to support GUID names on Windows */
                     (void)strlcpy(dev, live_dev, sizeof(dev));
 
                     if (strip_trailing_plus) {
                         size_t len = strlen(dev);
-                        if (len && dev[len-1] == '+') {
+                        if (len &&
+                                (dev[len-1] == '+' ||
+                                 dev[len-1] == '^' ||
+                                 dev[len-1] == '*'))
+                        {
                             dev[len-1] = '\0';
                         }
                     }
-                    int mtu = GetIfaceMTU(dev);
+                    mtu = GetIfaceMTU(dev);
                     g_default_mtu = MAX(mtu, g_default_mtu);
 
                     unsigned int iface_max_packet_size = GetIfaceMaxPacketSize(dev);
@@ -2497,9 +2563,10 @@ static void PostConfLoadedDetectSetup(SCInstance *suri)
                     "detection engine contexts failed.");
             exit(EXIT_FAILURE);
         }
-        if ((suri->delayed_detect || (mt_enabled && !default_tenant)) &&
-            (suri->run_mode != RUNMODE_CONF_TEST)) {
-            de_ctx = DetectEngineCtxInitMinimal();
+        if (suri->delayed_detect && suri->run_mode != RUNMODE_CONF_TEST) {
+            de_ctx = DetectEngineCtxInitStubForDD();
+        } else if (mt_enabled && !default_tenant && suri->run_mode != RUNMODE_CONF_TEST) {
+            de_ctx = DetectEngineCtxInitStubForMT();
         } else {
             de_ctx = DetectEngineCtxInit();
         }
@@ -2509,17 +2576,84 @@ static void PostConfLoadedDetectSetup(SCInstance *suri)
             exit(EXIT_FAILURE);
         }
 
-        if (!de_ctx->minimal) {
+        if (de_ctx->type == DETECT_ENGINE_TYPE_NORMAL) {
             if (LoadSignatures(de_ctx, suri) != TM_ECODE_OK)
                 exit(EXIT_FAILURE);
-            if (suri->run_mode == RUNMODE_ENGINE_ANALYSIS) {
-                exit(EXIT_SUCCESS);
-            }
         }
 
         gettimeofday(&de_ctx->last_reload, NULL);
         DetectEngineAddToMaster(de_ctx);
         DetectEngineBumpVersion();
+    }
+}
+
+static int PostDeviceFinalizedSetup(SCInstance *suri)
+{
+    SCEnter();
+
+#ifdef HAVE_AF_PACKET
+    if (suri->run_mode == RUNMODE_AFP_DEV) {
+        if (AFPRunModeIsIPS()) {
+            SCLogInfo("AF_PACKET: Setting IPS mode");
+            EngineModeSetIPS();
+        }
+    }
+#endif
+#ifdef HAVE_NETMAP
+    if (suri->run_mode == RUNMODE_NETMAP) {
+        if (NetmapRunModeIsIPS()) {
+            SCLogInfo("Netmap: Setting IPS mode");
+            EngineModeSetIPS();
+        }
+    }
+#endif
+
+    SCReturnInt(TM_ECODE_OK);
+}
+
+static void PostConfLoadedSetupHostMode(void)
+{
+    const char *hostmode = NULL;
+
+    if (ConfGetValue("host-mode", &hostmode) == 1) {
+        if (!strcmp(hostmode, "router")) {
+            host_mode = SURI_HOST_IS_ROUTER;
+        } else if (!strcmp(hostmode, "sniffer-only")) {
+            host_mode = SURI_HOST_IS_SNIFFER_ONLY;
+        } else {
+            if (strcmp(hostmode, "auto") != 0) {
+                WarnInvalidConfEntry("host-mode", "%s", "auto");
+            }
+            if (EngineModeIsIPS()) {
+                host_mode = SURI_HOST_IS_ROUTER;
+            } else {
+                host_mode = SURI_HOST_IS_SNIFFER_ONLY;
+            }
+        }
+    } else {
+        if (EngineModeIsIPS()) {
+            host_mode = SURI_HOST_IS_ROUTER;
+            SCLogInfo("No 'host-mode': suricata is in IPS mode, using "
+                      "default setting 'router'");
+        } else {
+            host_mode = SURI_HOST_IS_SNIFFER_ONLY;
+            SCLogInfo("No 'host-mode': suricata is in IDS mode, using "
+                      "default setting 'sniffer-only'");
+        }
+    }
+
+}
+
+static void SetupUserMode(SCInstance *suri)
+{
+    /* apply 'user mode' config updates here */
+    if (suri->system == false) {
+        if (suri->set_logdir == false) {
+            /* override log dir to current work dir" */
+            if (ConfigSetLogDirectory((char *)".") != TM_ECODE_OK) {
+                FatalError(SC_ERR_LOGDIR_CONFIG, "could not set USER mode logdir");
+            }
+        }
     }
 }
 
@@ -2529,8 +2663,6 @@ static void PostConfLoadedDetectSetup(SCInstance *suri)
  */
 static int PostConfLoadedSetup(SCInstance *suri)
 {
-    const char *hostmode = NULL;
-
     /* do this as early as possible #1577 #1955 */
 #ifdef HAVE_LUAJIT
     if (LuajitSetupStatesPool() != 0) {
@@ -2577,7 +2709,9 @@ static int PostConfLoadedSetup(SCInstance *suri)
     StorageInit();
 #ifdef HAVE_PACKET_EBPF
     EBPFRegisterExtension();
+    LiveDevRegisterExtension();
 #endif
+    RegisterFlowBypassInfo();
     AppLayerSetup();
 
     /* Suricata will use this umask if provided. By default it will use the
@@ -2604,33 +2738,6 @@ static int PostConfLoadedSetup(SCInstance *suri)
 
     if (ConfigGetCaptureValue(suri) != TM_ECODE_OK) {
         SCReturnInt(TM_ECODE_FAILED);
-    }
-
-    if (ConfGetValue("host-mode", &hostmode) == 1) {
-        if (!strcmp(hostmode, "router")) {
-            host_mode = SURI_HOST_IS_ROUTER;
-        } else if (!strcmp(hostmode, "sniffer-only")) {
-            host_mode = SURI_HOST_IS_SNIFFER_ONLY;
-        } else {
-            if (strcmp(hostmode, "auto") != 0) {
-                WarnInvalidConfEntry("host-mode", "%s", "auto");
-            }
-            if (EngineModeIsIPS()) {
-                host_mode = SURI_HOST_IS_ROUTER;
-            } else {
-                host_mode = SURI_HOST_IS_SNIFFER_ONLY;
-            }
-        }
-    } else {
-        if (EngineModeIsIPS()) {
-            host_mode = SURI_HOST_IS_ROUTER;
-            SCLogInfo("No 'host-mode': suricata is in IPS mode, using "
-                      "default setting 'router'");
-        } else {
-            host_mode = SURI_HOST_IS_SNIFFER_ONLY;
-            SCLogInfo("No 'host-mode': suricata is in IDS mode, using "
-                      "default setting 'sniffer-only'");
-        }
     }
 
 #ifdef NFQ
@@ -2702,6 +2809,7 @@ static int PostConfLoadedSetup(SCInstance *suri)
 #endif
 
     if (suri->disabled_detect) {
+        SCLogConfig("detection engine disabled");
         /* disable raw reassembly */
         (void)ConfSetFinal("stream.reassembly.raw", "false");
     }
@@ -2716,6 +2824,16 @@ static int PostConfLoadedSetup(SCInstance *suri)
     CoredumpLoadConfig();
 
     DecodeGlobalConfig();
+
+    LiveDeviceFinalize();
+
+    /* set engine mode if L2 IPS */
+    if (PostDeviceFinalizedSetup(&suricata) != TM_ECODE_OK) {
+        exit(EXIT_FAILURE);
+    }
+
+    /* hostmode depends on engine mode being set */
+    PostConfLoadedSetupHostMode();
 
     PreRunInit(suri->run_mode);
 
@@ -2853,14 +2971,23 @@ int main(int argc, char **argv)
         exit(EXIT_SUCCESS);
     }
 
+    int vlan_tracking = 1;
+    if (ConfGetBool("vlan.use-for-tracking", &vlan_tracking) == 1 && !vlan_tracking) {
+        /* Ignore vlan_ids when comparing flows. */
+        g_vlan_mask = 0x0000;
+    }
+    SCLogDebug("vlan tracking is %s", vlan_tracking == 1 ? "enabled" : "disabled");
+
+    SetupUserMode(&suricata);
+
     /* Since our config is now loaded we can finish configurating the
      * logging module. */
     SCLogLoadConfig(suricata.daemon, suricata.verbose);
 
-    LogVersion();
+    LogVersion(&suricata);
     UtilCpuPrintSummary();
 
-    if (ParseInterfacesList(suricata.run_mode, suricata.pcap_dev) != TM_ECODE_OK) {
+    if (ParseInterfacesList(suricata.aux_run_mode, suricata.pcap_dev) != TM_ECODE_OK) {
         exit(EXIT_FAILURE);
     }
 
@@ -2868,19 +2995,15 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    LiveDeviceFinalize();
-
     SCDropMainThreadCaps(suricata.userid, suricata.groupid);
     PreRunPostPrivsDropInit(suricata.run_mode);
 
     PostConfLoadedDetectSetup(&suricata);
-
-    if (suricata.run_mode == RUNMODE_CONF_TEST){
+    if (suricata.run_mode == RUNMODE_ENGINE_ANALYSIS) {
+        goto out;
+    } else if (suricata.run_mode == RUNMODE_CONF_TEST){
         SCLogNotice("Configuration provided was successfully loaded. Exiting.");
-#ifdef HAVE_MAGIC
-        MagicDeinit();
-#endif
-        exit(EXIT_SUCCESS);
+        goto out;
     }
 
     SCSetStartTime(&suricata);
@@ -2911,6 +3034,7 @@ int main(int argc, char **argv)
 #endif
 #endif
 
+    SCPledge();
     SuricataMainLoop(&suricata);
 
     /* Update the engine stage/status flag */
@@ -2921,6 +3045,7 @@ int main(int argc, char **argv)
     /* kill remaining threads */
     TmThreadKillThreads();
 
+out:
     GlobalsDestroy(&suricata);
 
     exit(EXIT_SUCCESS);

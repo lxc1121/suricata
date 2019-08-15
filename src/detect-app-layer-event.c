@@ -48,7 +48,7 @@
 
 #define MAX_ALPROTO_NAME 50
 
-static int DetectAppLayerEventPktMatch(ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectAppLayerEventPktMatch(DetectEngineThreadCtx *det_ctx,
                                        Packet *p, const Signature *s, const SigMatchCtx *ctx);
 static int DetectAppLayerEventSetupP1(DetectEngineCtx *, Signature *, const char *);
 static void DetectAppLayerEventRegisterTests(void);
@@ -95,7 +95,7 @@ static int DetectEngineAptEventInspect(ThreadVars *tv,
     DetectAppLayerEventData *aled = NULL;
 
     alproto = f->alproto;
-    decoder_events = AppLayerParserGetEventsByTx(f->proto, alproto, alstate, tx_id);
+    decoder_events = AppLayerParserGetEventsByTx(f->proto, alproto, tx);
     if (decoder_events == NULL)
         goto end;
 
@@ -133,7 +133,7 @@ static int DetectEngineAptEventInspect(ThreadVars *tv,
 }
 
 
-static int DetectAppLayerEventPktMatch(ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectAppLayerEventPktMatch(DetectEngineThreadCtx *det_ctx,
                                 Packet *p, const Signature *s, const SigMatchCtx *ctx)
 {
     const DetectAppLayerEventData *aled = (const DetectAppLayerEventData *)ctx;
@@ -285,6 +285,9 @@ static int DetectAppLayerEventSetupP2(Signature *s,
     if (DetectAppLayerEventParseAppP2((DetectAppLayerEventData *)sm->ctx, s->proto.proto,
                                       &event_type) < 0) {
         /* DetectAppLayerEventParseAppP2 prints errors */
+
+        /* sm has been removed from lists by DetectAppLayerEventPrepare */
+        SigMatchFree(sm);
         return -1;
     }
     SigMatchAppendSMToList(s, sm, g_applayer_events_list_id);
@@ -346,14 +349,28 @@ static void DetectAppLayerEventFree(void *ptr)
 int DetectAppLayerEventPrepare(Signature *s)
 {
     SigMatch *sm = s->init_data->smlists[g_applayer_events_list_id];
+    SigMatch *smn;
     s->init_data->smlists[g_applayer_events_list_id] = NULL;
     s->init_data->smlists_tail[g_applayer_events_list_id] = NULL;
 
     while (sm != NULL) {
+        // save it for later use in loop
+        smn = sm->next;
+        /* these will be overwritten in SigMatchAppendSMToList
+         * called by DetectAppLayerEventSetupP2
+         */
         sm->next = sm->prev = NULL;
-        if (DetectAppLayerEventSetupP2(s, sm) < 0)
+        if (DetectAppLayerEventSetupP2(s, sm) < 0) {
+            // current one was freed, let's free the next ones
+            sm = smn;
+            while(sm) {
+                smn = sm->next;
+                SigMatchFree(sm);
+                sm = smn;
+            }
             return -1;
-        sm = sm->next;
+        }
+        sm = smn;
     }
 
     return 0;
@@ -449,88 +466,48 @@ static int DetectAppLayerEventTest02(void)
                             DetectAppLayerEventTestGetEventInfo);
 
     AppLayerEventType event_type;
-    int result = 0;
     uint8_t ipproto_bitarray[256 / 8];
     memset(ipproto_bitarray, 0, sizeof(ipproto_bitarray));
     ipproto_bitarray[IPPROTO_TCP / 8] |= 1 << (IPPROTO_TCP % 8);
 
     DetectAppLayerEventData *aled = DetectAppLayerEventParse("smtp.event1",
                                                              &event_type);
-    if (aled == NULL)
-        goto end;
-    if (DetectAppLayerEventParseAppP2(aled, ipproto_bitarray, &event_type) < 0) {
-        printf("failure 1\n");
-        goto end;
-    }
-    if (aled->alproto != ALPROTO_SMTP ||
-        aled->event_id != APP_LAYER_EVENT_TEST_MAP_EVENT1) {
-        printf("test failure.  Holding wrong state\n");
-        goto end;
-    }
+    FAIL_IF_NULL(aled);
+    FAIL_IF(DetectAppLayerEventParseAppP2(aled, ipproto_bitarray, &event_type) < 0);
+    FAIL_IF(aled->alproto != ALPROTO_SMTP);
+    FAIL_IF(aled->event_id != APP_LAYER_EVENT_TEST_MAP_EVENT1);
 
     aled = DetectAppLayerEventParse("smtp.event4",
                                     &event_type);
-    if (aled == NULL)
-        goto end;
-    if (DetectAppLayerEventParseAppP2(aled, ipproto_bitarray, &event_type) < 0) {
-        printf("failure 1\n");
-        goto end;
-    }
-    if (aled->alproto != ALPROTO_SMTP ||
-        aled->event_id != APP_LAYER_EVENT_TEST_MAP_EVENT4) {
-        printf("test failure.  Holding wrong state\n");
-        goto end;
-    }
+    FAIL_IF_NULL(aled);
+    FAIL_IF(DetectAppLayerEventParseAppP2(aled, ipproto_bitarray, &event_type) < 0);
+    FAIL_IF(aled->alproto != ALPROTO_SMTP);
+    FAIL_IF(aled->event_id != APP_LAYER_EVENT_TEST_MAP_EVENT4);
 
     aled = DetectAppLayerEventParse("http.event2",
                                     &event_type);
-    if (aled == NULL)
-        goto end;
-    if (DetectAppLayerEventParseAppP2(aled, ipproto_bitarray, &event_type) < 0) {
-        printf("failure 1\n");
-        goto end;
-    }
-    if (aled->alproto != ALPROTO_HTTP ||
-        aled->event_id != APP_LAYER_EVENT_TEST_MAP_EVENT2) {
-        printf("test failure.  Holding wrong state\n");
-        goto end;
-    }
+    FAIL_IF_NULL(aled);
+    FAIL_IF(DetectAppLayerEventParseAppP2(aled, ipproto_bitarray, &event_type) < 0);
+    FAIL_IF(aled->alproto != ALPROTO_HTTP);
+    FAIL_IF(aled->event_id != APP_LAYER_EVENT_TEST_MAP_EVENT2);
 
     aled = DetectAppLayerEventParse("smb.event3",
                                     &event_type);
-    if (aled == NULL)
-        goto end;
-    if (DetectAppLayerEventParseAppP2(aled, ipproto_bitarray, &event_type) < 0) {
-        printf("failure 1\n");
-        goto end;
-    }
-    if (aled->alproto != ALPROTO_SMB ||
-        aled->event_id != APP_LAYER_EVENT_TEST_MAP_EVENT3) {
-        printf("test failure.  Holding wrong state\n");
-        goto end;
-    }
+    FAIL_IF_NULL(aled);
+    FAIL_IF(DetectAppLayerEventParseAppP2(aled, ipproto_bitarray, &event_type) < 0);
+    FAIL_IF(aled->alproto != ALPROTO_SMB);
+    FAIL_IF(aled->event_id != APP_LAYER_EVENT_TEST_MAP_EVENT3);
 
     aled = DetectAppLayerEventParse("ftp.event5",
                                     &event_type);
-    if (aled == NULL)
-        goto end;
-    if (DetectAppLayerEventParseAppP2(aled, ipproto_bitarray, &event_type) < 0) {
-        printf("failure 1\n");
-        goto end;
-    }
-    if (aled->alproto != ALPROTO_FTP ||
-        aled->event_id != APP_LAYER_EVENT_TEST_MAP_EVENT5) {
-        printf("test failure.  Holding wrong state\n");
-        goto end;
-    }
+    FAIL_IF_NULL(aled);
+    FAIL_IF(DetectAppLayerEventParseAppP2(aled, ipproto_bitarray, &event_type) < 0);
+    FAIL_IF(aled->alproto != ALPROTO_FTP);
+    FAIL_IF(aled->event_id != APP_LAYER_EVENT_TEST_MAP_EVENT5);
 
-    result = 1;
-
- end:
     AppLayerParserRestoreParserTable();
-    if (aled != NULL)
-        DetectAppLayerEventFree(aled);
-    return result;
+    DetectAppLayerEventFree(aled);
+    PASS;
 }
 
 static int DetectAppLayerEventTest03(void)
@@ -601,7 +578,8 @@ static int DetectAppLayerEventTest03(void)
     StreamTcpUTInit(&ra_ctx);
 
     p->flowflags = FLOW_PKT_TOSERVER;
-    FAIL_IF(AppLayerHandleTCPData(&tv, ra_ctx, p, f, &ssn, &stream_ts, buf_ts,
+    TcpStream *stream = &stream_ts;
+    FAIL_IF(AppLayerHandleTCPData(&tv, ra_ctx, p, f, &ssn, &stream, buf_ts,
                              sizeof(buf_ts), STREAM_TOSERVER | STREAM_START) < 0);
 
     SigMatchSignatures(&tv, de_ctx, det_ctx, p);
@@ -609,7 +587,8 @@ static int DetectAppLayerEventTest03(void)
     FAIL_IF (PacketAlertCheck(p, 1));
 
     p->flowflags = FLOW_PKT_TOCLIENT;
-    FAIL_IF (AppLayerHandleTCPData(&tv, ra_ctx, p, f, &ssn, &stream_tc, buf_tc,
+    stream = &stream_tc;
+    FAIL_IF (AppLayerHandleTCPData(&tv, ra_ctx, p, f, &ssn, &stream, buf_tc,
                               sizeof(buf_tc), STREAM_TOCLIENT | STREAM_START) < 0);
 
     SigMatchSignatures(&tv, de_ctx, det_ctx, p);
@@ -688,13 +667,15 @@ static int DetectAppLayerEventTest04(void)
     StreamTcpUTInit(&ra_ctx);
 
     p->flowflags = FLOW_PKT_TOSERVER;
-    FAIL_IF(AppLayerHandleTCPData(&tv, ra_ctx, p, f, &ssn, &stream_ts, buf_ts,
+    TcpStream *stream = &stream_ts;
+    FAIL_IF(AppLayerHandleTCPData(&tv, ra_ctx, p, f, &ssn, &stream, buf_ts,
                               sizeof(buf_ts), STREAM_TOSERVER | STREAM_START) < 0);
     SigMatchSignatures(&tv, de_ctx, det_ctx, p);
     FAIL_IF (PacketAlertCheck(p, 1));
 
     p->flowflags = FLOW_PKT_TOCLIENT;
-    FAIL_IF (AppLayerHandleTCPData(&tv, ra_ctx, p, f, &ssn, &stream_tc, buf_tc,
+    stream = &stream_tc;
+    FAIL_IF (AppLayerHandleTCPData(&tv, ra_ctx, p, f, &ssn, &stream, buf_tc,
                               sizeof(buf_tc), STREAM_TOCLIENT | STREAM_START) < 0);
     SigMatchSignatures(&tv, de_ctx, det_ctx, p);
     FAIL_IF (!PacketAlertCheck(p, 1));
@@ -787,13 +768,15 @@ static int DetectAppLayerEventTest05(void)
     StreamTcpUTInit(&ra_ctx);
 
     p->flowflags = FLOW_PKT_TOSERVER;
-    FAIL_IF (AppLayerHandleTCPData(&tv, ra_ctx, p, f, &ssn, &stream_ts, buf_ts,
+    TcpStream *stream = &stream_ts;
+    FAIL_IF (AppLayerHandleTCPData(&tv, ra_ctx, p, f, &ssn, &stream, buf_ts,
                               sizeof(buf_ts), STREAM_TOSERVER | STREAM_START) < 0);
     SigMatchSignatures(&tv, de_ctx, det_ctx, p);
     FAIL_IF (PacketAlertCheck(p, 1));
 
     p->flowflags = FLOW_PKT_TOCLIENT;
-    FAIL_IF (AppLayerHandleTCPData(&tv, ra_ctx, p, f, &ssn, &stream_tc, buf_tc,
+    stream = &stream_tc;
+    FAIL_IF (AppLayerHandleTCPData(&tv, ra_ctx, p, f, &ssn, &stream, buf_tc,
                               sizeof(buf_tc), STREAM_TOCLIENT | STREAM_START) < 0);
     SigMatchSignatures(&tv, de_ctx, det_ctx, p);
     FAIL_IF (!PacketAlertCheck(p, 1));

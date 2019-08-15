@@ -56,8 +56,7 @@
 
 typedef struct OutputSshCtx_ {
     LogFileCtx *file_ctx;
-    uint32_t flags; /** Store mode */
-    bool include_metadata;
+    OutputJsonCommonSettings cfg;
 } OutputSshCtx;
 
 
@@ -72,20 +71,20 @@ void JsonSshLogJSON(json_t *tjs, SshState *ssh_state)
     json_t *cjs = json_object();
     if (cjs != NULL) {
         json_object_set_new(cjs, "proto_version",
-                json_string((char *)ssh_state->cli_hdr.proto_version));
+                SCJsonString((char *)ssh_state->cli_hdr.proto_version));
 
         json_object_set_new(cjs, "software_version",
-                json_string((char *)ssh_state->cli_hdr.software_version));
+                SCJsonString((char *)ssh_state->cli_hdr.software_version));
     }
     json_object_set_new(tjs, "client", cjs);
 
     json_t *sjs = json_object();
     if (sjs != NULL) {
         json_object_set_new(sjs, "proto_version",
-                json_string((char *)ssh_state->srv_hdr.proto_version));
+                SCJsonString((char *)ssh_state->srv_hdr.proto_version));
 
         json_object_set_new(sjs, "software_version",
-                json_string((char *)ssh_state->srv_hdr.software_version));
+                SCJsonString((char *)ssh_state->srv_hdr.software_version));
     }
     json_object_set_new(tjs, "server", sjs);
 
@@ -110,9 +109,7 @@ static int JsonSshLogger(ThreadVars *tv, void *thread_data, const Packet *p,
     if (unlikely(js == NULL))
         return 0;
 
-    if (ssh_ctx->include_metadata) {
-        JsonAddMetadata(p, f, js);
-    }
+    JsonAddCommonOptions(&ssh_ctx->cfg, p, f, js);
 
     json_t *tjs = json_object();
     if (tjs == NULL) {
@@ -134,7 +131,6 @@ static int JsonSshLogger(ThreadVars *tv, void *thread_data, const Packet *p,
     return 0;
 }
 
-#define OUTPUT_BUFFER_SIZE 65535
 static TmEcode JsonSshLogThreadInit(ThreadVars *t, const void *initdata, void **data)
 {
     JsonSshLogThread *aft = SCMalloc(sizeof(JsonSshLogThread));
@@ -152,7 +148,7 @@ static TmEcode JsonSshLogThreadInit(ThreadVars *t, const void *initdata, void **
     /* Use the Ouptut Context (file pointer and mutex) */
     aft->sshlog_ctx = ((OutputCtx *)initdata)->data;
 
-    aft->buffer = MemBufferCreateNew(OUTPUT_BUFFER_SIZE);
+    aft->buffer = MemBufferCreateNew(JSON_OUTPUT_BUFFER_SIZE);
     if (aft->buffer == NULL) {
         SCFree(aft);
         return TM_ECODE_FAILED;
@@ -249,7 +245,7 @@ static OutputInitResult OutputSshLogInitSub(ConfNode *conf, OutputCtx *parent_ct
     }
 
     ssh_ctx->file_ctx = ojc->file_ctx;
-    ssh_ctx->include_metadata = ojc->include_metadata;
+    ssh_ctx->cfg = ojc->cfg;
 
     output_ctx->data = ssh_ctx;
     output_ctx->DeInit = OutputSshLogDeinitSub;

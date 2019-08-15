@@ -135,8 +135,10 @@ static inline uint32_t FlowGetHash(const Packet *p)
 
             fhk.proto = (uint16_t)p->proto;
             fhk.recur = (uint16_t)p->recursion_level;
-            fhk.vlan_id[0] = p->vlan_id[0];
-            fhk.vlan_id[1] = p->vlan_id[1];
+            /* g_vlan_mask sets the vlan_ids to 0 if vlan.use-for-tracking
+             * is disabled. */
+            fhk.vlan_id[0] = p->vlan_id[0] & g_vlan_mask;
+            fhk.vlan_id[1] = p->vlan_id[1] & g_vlan_mask;
 
             hash = hashword(fhk.u32, 5, flow_config.hash_rand);
 
@@ -155,8 +157,8 @@ static inline uint32_t FlowGetHash(const Packet *p)
 
             fhk.proto = (uint16_t)ICMPV4_GET_EMB_PROTO(p);
             fhk.recur = (uint16_t)p->recursion_level;
-            fhk.vlan_id[0] = p->vlan_id[0];
-            fhk.vlan_id[1] = p->vlan_id[1];
+            fhk.vlan_id[0] = p->vlan_id[0] & g_vlan_mask;
+            fhk.vlan_id[1] = p->vlan_id[1] & g_vlan_mask;
 
             hash = hashword(fhk.u32, 5, flow_config.hash_rand);
 
@@ -169,8 +171,8 @@ static inline uint32_t FlowGetHash(const Packet *p)
             fhk.ports[1] = 0xbeef;
             fhk.proto = (uint16_t)p->proto;
             fhk.recur = (uint16_t)p->recursion_level;
-            fhk.vlan_id[0] = p->vlan_id[0];
-            fhk.vlan_id[1] = p->vlan_id[1];
+            fhk.vlan_id[0] = p->vlan_id[0] & g_vlan_mask;
+            fhk.vlan_id[1] = p->vlan_id[1] & g_vlan_mask;
 
             hash = hashword(fhk.u32, 5, flow_config.hash_rand);
         }
@@ -201,8 +203,8 @@ static inline uint32_t FlowGetHash(const Packet *p)
         fhk.ports[pi] = p->dp;
         fhk.proto = (uint16_t)p->proto;
         fhk.recur = (uint16_t)p->recursion_level;
-        fhk.vlan_id[0] = p->vlan_id[0];
-        fhk.vlan_id[1] = p->vlan_id[1];
+        fhk.vlan_id[0] = p->vlan_id[0] & g_vlan_mask;
+        fhk.vlan_id[1] = p->vlan_id[1] & g_vlan_mask;
 
         hash = hashword(fhk.u32, 11, flow_config.hash_rand);
     }
@@ -210,30 +212,147 @@ static inline uint32_t FlowGetHash(const Packet *p)
     return hash;
 }
 
+/**
+ * Basic hashing function for FlowKey
+ *
+ * \note Function only used for bypass and TCP or UDP flows
+ *
+ * \note this is only used at start to create Flow from pinned maps
+ * so fairness is not an issue
+ */
+uint32_t FlowKeyGetHash(FlowKey *fk)
+{
+    uint32_t hash = 0;
+
+    if (fk->src.family == AF_INET) {
+        FlowHashKey4 fhk;
+        int ai = (fk->src.address.address_un_data32[0] > fk->dst.address.address_un_data32[0]);
+        fhk.addrs[1-ai] = fk->src.address.address_un_data32[0];
+        fhk.addrs[ai] = fk->dst.address.address_un_data32[0];
+
+        const int pi = (fk->sp > fk->dp);
+        fhk.ports[1-pi] = fk->sp;
+        fhk.ports[pi] = fk->dp;
+
+        fhk.proto = (uint16_t)fk->proto;
+        fhk.recur = (uint16_t)fk->recursion_level;
+        fhk.vlan_id[0] = fk->vlan_id[0] & g_vlan_mask;
+        fhk.vlan_id[1] = fk->vlan_id[1] & g_vlan_mask;
+
+        hash = hashword(fhk.u32, 5, flow_config.hash_rand);
+    } else {
+        FlowHashKey6 fhk;
+        if (FlowHashRawAddressIPv6GtU32(fk->src.address.address_un_data32,
+                    fk->dst.address.address_un_data32)) {
+            fhk.src[0] = fk->src.address.address_un_data32[0];
+            fhk.src[1] = fk->src.address.address_un_data32[1];
+            fhk.src[2] = fk->src.address.address_un_data32[2];
+            fhk.src[3] = fk->src.address.address_un_data32[3];
+            fhk.dst[0] = fk->dst.address.address_un_data32[0];
+            fhk.dst[1] = fk->dst.address.address_un_data32[1];
+            fhk.dst[2] = fk->dst.address.address_un_data32[2];
+            fhk.dst[3] = fk->dst.address.address_un_data32[3];
+        } else {
+            fhk.src[0] = fk->dst.address.address_un_data32[0];
+            fhk.src[1] = fk->dst.address.address_un_data32[1];
+            fhk.src[2] = fk->dst.address.address_un_data32[2];
+            fhk.src[3] = fk->dst.address.address_un_data32[3];
+            fhk.dst[0] = fk->src.address.address_un_data32[0];
+            fhk.dst[1] = fk->src.address.address_un_data32[1];
+            fhk.dst[2] = fk->src.address.address_un_data32[2];
+            fhk.dst[3] = fk->src.address.address_un_data32[3];
+        }
+
+        const int pi = (fk->sp > fk->dp);
+        fhk.ports[1-pi] = fk->sp;
+        fhk.ports[pi] = fk->dp;
+        fhk.proto = (uint16_t)fk->proto;
+        fhk.recur = (uint16_t)fk->recursion_level;
+        fhk.vlan_id[0] = fk->vlan_id[0] & g_vlan_mask;
+        fhk.vlan_id[1] = fk->vlan_id[1] & g_vlan_mask;
+
+        hash = hashword(fhk.u32, 11, flow_config.hash_rand);
+    }
+    return hash;
+}
+
+static inline bool CmpAddrs(const uint32_t addr1[4], const uint32_t addr2[4])
+{
+    return addr1[0] == addr2[0] && addr1[1] == addr2[1] &&
+           addr1[2] == addr2[2] && addr1[3] == addr2[3];
+}
+
+static inline bool CmpAddrsAndPorts(const uint32_t src1[4],
+    const uint32_t dst1[4], Port src_port1, Port dst_port1,
+    const uint32_t src2[4], const uint32_t dst2[4], Port src_port2,
+    Port dst_port2)
+{
+    /* Compare the source and destination addresses. If they are not equal,
+     * compare the first source address with the second destination address,
+     * and vice versa. Likewise for ports. */
+    return (CmpAddrs(src1, src2) && CmpAddrs(dst1, dst2) &&
+            src_port1 == src_port2 && dst_port1 == dst_port2) ||
+           (CmpAddrs(src1, dst2) && CmpAddrs(dst1, src2) &&
+            src_port1 == dst_port2 && dst_port1 == src_port2);
+}
+
+static inline bool CmpVlanIds(const uint16_t vlan_id1[2], const uint16_t vlan_id2[2])
+{
+    return ((vlan_id1[0] ^ vlan_id2[0]) & g_vlan_mask) == 0 &&
+           ((vlan_id1[1] ^ vlan_id2[1]) & g_vlan_mask) == 0;
+}
+
 /* Since two or more flows can have the same hash key, we need to compare
- * the flow with the current flow key. */
-#define CMP_FLOW(f1,f2) \
-    (((CMP_ADDR(&(f1)->src, &(f2)->src) && \
-       CMP_ADDR(&(f1)->dst, &(f2)->dst) && \
-       CMP_PORT((f1)->sp, (f2)->sp) && CMP_PORT((f1)->dp, (f2)->dp)) || \
-      (CMP_ADDR(&(f1)->src, &(f2)->dst) && \
-       CMP_ADDR(&(f1)->dst, &(f2)->src) && \
-       CMP_PORT((f1)->sp, (f2)->dp) && CMP_PORT((f1)->dp, (f2)->sp))) && \
-     (f1)->proto == (f2)->proto && \
-     (f1)->recursion_level == (f2)->recursion_level && \
-     (f1)->vlan_id[0] == (f2)->vlan_id[0] && \
-     (f1)->vlan_id[1] == (f2)->vlan_id[1])
-#define CMP_FLOW_ICMP(f1,f2) \
-    (((CMP_ADDR(&(f1)->src, &(f2)->src) && \
-       CMP_ADDR(&(f1)->dst, &(f2)->dst) && \
-       CMP_PORT((f1)->icmp_s.type, (f2)->icmp_s.type) && CMP_PORT((f1)->icmp_d.type, (f2)->icmp_d.type)) || \
-      (CMP_ADDR(&(f1)->src, &(f2)->dst) && \
-       CMP_ADDR(&(f1)->dst, &(f2)->src) && \
-       CMP_PORT((f1)->icmp_d.type, (f2)->icmp_s.type) && CMP_PORT((f1)->icmp_s.type, (f2)->icmp_d.type))) && \
-     (f1)->proto == (f2)->proto && \
-     (f1)->recursion_level == (f2)->recursion_level && \
-     (f1)->vlan_id[0] == (f2)->vlan_id[0] && \
-     (f1)->vlan_id[1] == (f2)->vlan_id[1])
+ * the flow with the current packet or flow key. */
+static inline bool CmpFlowPacket(const Flow *f, const Packet *p)
+{
+    const uint32_t *f_src = f->src.address.address_un_data32;
+    const uint32_t *f_dst = f->dst.address.address_un_data32;
+    const uint32_t *p_src = p->src.address.address_un_data32;
+    const uint32_t *p_dst = p->dst.address.address_un_data32;
+    return CmpAddrsAndPorts(f_src, f_dst, f->sp, f->dp, p_src, p_dst, p->sp,
+                            p->dp) && f->proto == p->proto &&
+            f->recursion_level == p->recursion_level &&
+            CmpVlanIds(f->vlan_id, p->vlan_id);
+}
+
+static inline bool CmpFlowKey(const Flow *f, const FlowKey *k)
+{
+    const uint32_t *f_src = f->src.address.address_un_data32;
+    const uint32_t *f_dst = f->dst.address.address_un_data32;
+    const uint32_t *k_src = k->src.address.address_un_data32;
+    const uint32_t *k_dst = k->dst.address.address_un_data32;
+    return CmpAddrsAndPorts(f_src, f_dst, f->sp, f->dp, k_src, k_dst, k->sp,
+                            k->dp) && f->proto == k->proto &&
+            f->recursion_level == k->recursion_level &&
+            CmpVlanIds(f->vlan_id, k->vlan_id);
+}
+
+static inline bool CmpAddrsAndICMPTypes(const uint32_t src1[4],
+    const uint32_t dst1[4], uint8_t icmp_s_type1, uint8_t icmp_d_type1,
+    const uint32_t src2[4], const uint32_t dst2[4], uint8_t icmp_s_type2,
+    uint8_t icmp_d_type2)
+{
+    /* Compare the source and destination addresses. If they are not equal,
+     * compare the first source address with the second destination address,
+     * and vice versa. Likewise for icmp types. */
+    return (CmpAddrs(src1, src2) && CmpAddrs(dst1, dst2) &&
+            icmp_s_type1 == icmp_s_type2 && icmp_d_type1 == icmp_d_type2) ||
+           (CmpAddrs(src1, dst2) && CmpAddrs(dst1, src2) &&
+            icmp_s_type1 == icmp_d_type2 && icmp_d_type1 == icmp_s_type2);
+}
+
+static inline bool CmpFlowICMPPacket(const Flow *f, const Packet *p)
+{
+    const uint32_t *f_src = f->src.address.address_un_data32;
+    const uint32_t *f_dst = f->dst.address.address_un_data32;
+    const uint32_t *p_src = p->src.address.address_un_data32;
+    const uint32_t *p_dst = p->dst.address.address_un_data32;
+    return CmpAddrsAndICMPTypes(f_src, f_dst, f->icmp_s.type,
+                f->icmp_d.type, p_src, p_dst, p->icmp_s.type, p->icmp_d.type) &&
+            f->proto == p->proto && f->recursion_level == p->recursion_level &&
+            CmpVlanIds(f->vlan_id, p->vlan_id);
+}
 
 /**
  *  \brief See if a ICMP packet belongs to a flow by comparing the embedded
@@ -279,7 +398,7 @@ static inline int FlowCompareICMPv4(Flow *f, const Packet *p)
         /* no match, fall through */
     } else {
         /* just treat ICMP as a normal proto for now */
-        return CMP_FLOW_ICMP(f, p);
+        return CmpFlowICMPPacket(f, p);
     }
 
     return 0;
@@ -298,7 +417,7 @@ static inline int FlowCompare(Flow *f, const Packet *p)
     if (p->proto == IPPROTO_ICMP) {
         return FlowCompareICMPv4(f, p);
     } else if (p->proto == IPPROTO_TCP) {
-        if (CMP_FLOW(f, p) == 0)
+        if (CmpFlowPacket(f, p) == 0)
             return 0;
 
         /* if this session is 'reused', we don't return it anymore,
@@ -308,7 +427,7 @@ static inline int FlowCompare(Flow *f, const Packet *p)
 
         return 1;
     } else {
-        return CMP_FLOW(f, p);
+        return CmpFlowPacket(f, p);
     }
 }
 
@@ -597,6 +716,145 @@ Flow *FlowGetFlowFromHash(ThreadVars *tv, DecodeThreadVars *dtv, const Packet *p
     }
 
     FlowReference(dest, f);
+
+    FBLOCK_UNLOCK(fb);
+    return f;
+}
+
+static inline int FlowCompareKey(Flow *f, FlowKey *key)
+{
+    if ((f->proto != IPPROTO_TCP) && (f->proto != IPPROTO_UDP))
+        return 0;
+    return CmpFlowKey(f, key);
+}
+
+/** \brief Get or create a Flow using a FlowKey
+ *
+ * Hash retrieval function for flows. Looks up the hash bucket containing the
+ * flow pointer. Then compares the packet with the found flow to see if it is
+ * the flow we need. If it isn't, walk the list until the right flow is found.
+ * Return a new Flow if ever no Flow was found.
+ *
+ *
+ *  \param key Pointer to FlowKey build using flow to look for
+ *  \param ttime time to use for flow creation
+ *  \param hash Value of the flow hash
+ *  \retval f *LOCKED* flow or NULL
+ */
+
+Flow *FlowGetFromFlowKey(FlowKey *key, struct timespec *ttime, const uint32_t hash)
+{
+    Flow *f = FlowGetExistingFlowFromHash(key, hash);
+
+    if (f != NULL) {
+        return f;
+    }
+
+    /* No existing flow so let's get one new */
+    f = FlowDequeue(&flow_spare_q);
+    if (f == NULL) {
+        /* now see if we can alloc a new flow */
+        f = FlowAlloc();
+        if (f == NULL) {
+            SCLogDebug("Can't get a spare flow at start");
+            return NULL;
+        }
+    }
+    f->proto = key->proto;
+    f->vlan_id[0] = key->vlan_id[0];
+    f->vlan_id[1] = key->vlan_id[1];
+    f->src.addr_data32[0] = key->src.addr_data32[0];
+    f->src.addr_data32[1] = key->src.addr_data32[1];
+    f->src.addr_data32[2] = key->src.addr_data32[2];
+    f->src.addr_data32[3] = key->src.addr_data32[3];
+    f->dst.addr_data32[0] = key->dst.addr_data32[0];
+    f->dst.addr_data32[1] = key->dst.addr_data32[1];
+    f->dst.addr_data32[2] = key->dst.addr_data32[2];
+    f->dst.addr_data32[3] = key->dst.addr_data32[3];
+    f->sp = key->sp;
+    f->dp = key->dp;
+    f->recursion_level = 0;
+    f->flow_hash = hash;
+    if (key->src.family == AF_INET) {
+        f->flags |= FLOW_IPV4;
+    } else if (key->src.family == AF_INET6) {
+        f->flags |= FLOW_IPV6;
+    }
+    FlowUpdateState(f, FLOW_STATE_CAPTURE_BYPASSED);
+
+    f->protomap = FlowGetProtoMapping(f->proto);
+    /* set timestamp to now */
+    f->startts.tv_sec = ttime->tv_sec;
+    f->startts.tv_usec = ttime->tv_nsec * 1000;
+    f->lastts = f->startts;
+
+    FlowBucket *fb = &flow_hash[hash % flow_config.hash_size];
+    FBLOCK_LOCK(fb);
+    f->fb = fb;
+    if (fb->head == NULL) {
+        fb->head = f;
+        fb->tail = f;
+    } else {
+        f->hprev = fb->tail;
+        f->hprev->hnext = f;
+        fb->tail = f;
+    }
+    FLOWLOCK_WRLOCK(f);
+    FBLOCK_UNLOCK(fb);
+
+    return f;
+}
+
+/** \brief Look for existing Flow using a FlowKey
+ *
+ * Hash retrieval function for flows. Looks up the hash bucket containing the
+ * flow pointer. Then compares the packet with the found flow to see if it is
+ * the flow we need. If it isn't, walk the list until the right flow is found.
+ *
+ *
+ *  \param key Pointer to FlowKey build using flow to look for
+ *  \param hash Value of the flow hash
+ *  \retval f *LOCKED* flow or NULL
+ */
+Flow *FlowGetExistingFlowFromHash(FlowKey *key, const uint32_t hash)
+{
+    /* get our hash bucket and lock it */
+    FlowBucket *fb = &flow_hash[hash % flow_config.hash_size];
+    FBLOCK_LOCK(fb);
+
+    SCLogDebug("fb %p fb->head %p", fb, fb->head);
+
+    /* return if the bucket don't have a flow */
+    if (fb->head == NULL) {
+        FBLOCK_UNLOCK(fb);
+        return NULL;
+    }
+
+    /* ok, we have a flow in the bucket. Let's find out if it is our flow */
+    Flow *f = fb->head;
+
+    /* see if this is the flow we are looking for */
+    if (FlowCompareKey(f, key) == 0) {
+        while (f) {
+            f = f->hnext;
+
+            if (f == NULL) {
+                FBLOCK_UNLOCK(fb);
+                return NULL;
+            }
+
+            if (FlowCompareKey(f, key) != 0) {
+                /* found our flow, lock & return */
+                FLOWLOCK_WRLOCK(f);
+
+                FBLOCK_UNLOCK(fb);
+                return f;
+            }
+        }
+    }
+
+    /* lock & return */
+    FLOWLOCK_WRLOCK(f);
 
     FBLOCK_UNLOCK(fb);
     return f;

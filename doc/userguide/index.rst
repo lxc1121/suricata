@@ -16,12 +16,14 @@ Suricata User Guide
    reputation/index.rst
    initscripts
    setting-up-ipsinline-for-linux
+   setting-up-ipsinline-for-windows
    output/index.rst
    lua/index.rst
    file-extraction/file-extraction.rst
    public-data-sets
    capture-hardware/index.rst
    unix-socket.rst
+   3rd-party-integration/index.rst
    manpages/index.rst
    acknowledgements
    licenses/index.rst

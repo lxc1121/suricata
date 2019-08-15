@@ -49,6 +49,7 @@
 
 #include "app-layer.h"
 #include "app-layer-parser.h"
+#include "app-layer-htp.h"
 
 #include "stream-tcp.h"
 
@@ -87,9 +88,9 @@ void DetectLuaRegister(void)
 
 #include "util-lua.h"
 
-static int DetectLuaMatch (ThreadVars *, DetectEngineThreadCtx *,
+static int DetectLuaMatch (DetectEngineThreadCtx *,
         Packet *, const Signature *, const SigMatchCtx *);
-static int DetectLuaAppTxMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectLuaAppTxMatch (DetectEngineThreadCtx *det_ctx,
                                 Flow *f, uint8_t flags,
                                 void *state, void *txv, const Signature *s,
                                 const SigMatchCtx *ctx);
@@ -112,7 +113,7 @@ void DetectLuaRegister(void)
     sigmatch_table[DETECT_LUA].name = "lua";
     sigmatch_table[DETECT_LUA].alias = "luajit";
     sigmatch_table[DETECT_LUA].desc = "match via a lua script";
-    sigmatch_table[DETECT_LUA].url = "https://suricata.readthedocs.io/en/latest/rules/rule-lua-scripting.html";
+    sigmatch_table[DETECT_LUA].url = DOC_URL DOC_VERSION "/rules/rule-lua-scripting.html";
     sigmatch_table[DETECT_LUA].Match = DetectLuaMatch;
     sigmatch_table[DETECT_LUA].AppLayerTxMatch = DetectLuaAppTxMatch;
     sigmatch_table[DETECT_LUA].Setup = DetectLuaSetup;
@@ -171,7 +172,9 @@ static int InspectSmtpGeneric(ThreadVars *tv,
 #define DATATYPE_SSH                        (1<<19)
 #define DATATYPE_SMTP                       (1<<20)
 
-#define DATATYPE_DNP3                       (1<<20)
+#define DATATYPE_DNP3                       (1<<21)
+
+#define DATATYPE_BUFFER                     (1<<22)
 
 #if 0
 /** \brief dump stack from lua state to screen */
@@ -316,7 +319,7 @@ int DetectLuaMatchBuffer(DetectEngineThreadCtx *det_ctx,
  * \retval 0 no match
  * \retval 1 match
  */
-static int DetectLuaMatch (ThreadVars *tv, DetectEngineThreadCtx *det_ctx,
+static int DetectLuaMatch (DetectEngineThreadCtx *det_ctx,
         Packet *p, const Signature *s, const SigMatchCtx *ctx)
 {
     SCEnter();
@@ -336,7 +339,7 @@ static int DetectLuaMatch (ThreadVars *tv, DetectEngineThreadCtx *det_ctx,
     else if (p->flowflags & FLOW_PKT_TOCLIENT)
         flags = STREAM_TOCLIENT;
 
-    LuaStateSetThreadVars(tlua->luastate, tv);
+    LuaStateSetThreadVars(tlua->luastate, det_ctx->tv);
 
     LuaExtensionsMatchSetup(tlua->luastate, lua, det_ctx,
             p->flow, p, flags);
@@ -448,7 +451,7 @@ static int DetectLuaMatch (ThreadVars *tv, DetectEngineThreadCtx *det_ctx,
     SCReturnInt(ret);
 }
 
-static int DetectLuaAppMatchCommon (ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectLuaAppMatchCommon (DetectEngineThreadCtx *det_ctx,
         Flow *f, uint8_t flags, void *state,
         const Signature *s, const SigMatchCtx *ctx)
 {
@@ -561,12 +564,12 @@ static int DetectLuaAppMatchCommon (ThreadVars *t, DetectEngineThreadCtx *det_ct
  * \retval 0 no match
  * \retval 1 match
  */
-static int DetectLuaAppTxMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectLuaAppTxMatch (DetectEngineThreadCtx *det_ctx,
                                 Flow *f, uint8_t flags,
                                 void *state, void *txv, const Signature *s,
                                 const SigMatchCtx *ctx)
 {
-    return DetectLuaAppMatchCommon(t, det_ctx, f, flags, state, s, ctx);
+    return DetectLuaAppMatchCommon(det_ctx, f, flags, state, s, ctx);
 }
 
 #ifdef UNITTESTS
@@ -819,6 +822,14 @@ static int DetectLuaSetupPrime(DetectEngineCtx *de_ctx, DetectLuaData *ld)
             ld->flags |= DATATYPE_PACKET;
         } else if (strcmp(k, "payload") == 0 && strcmp(v, "true") == 0) {
             ld->flags |= DATATYPE_PAYLOAD;
+        } else if (strcmp(k, "buffer") == 0 && strcmp(v, "true") == 0) {
+            ld->flags |= DATATYPE_BUFFER;
+
+            ld->buffername = SCStrdup("buffer");
+            if (ld->buffername == NULL) {
+                SCLogError(SC_ERR_LUA_ERROR, "alloc error");
+                goto error;
+            }
         } else if (strcmp(k, "stream") == 0 && strcmp(v, "true") == 0) {
             ld->flags |= DATATYPE_STREAM;
 
@@ -996,8 +1007,17 @@ static int DetectLuaSetup (DetectEngineCtx *de_ctx, Signature *s, const char *st
     if (lua->alproto == ALPROTO_UNKNOWN) {
         if (lua->flags & DATATYPE_STREAM)
             list = DETECT_SM_LIST_PMATCH;
-        else
-            list = DETECT_SM_LIST_MATCH;
+        else {
+            if (lua->flags & DATATYPE_BUFFER) {
+                if (DetectBufferGetActiveList(de_ctx, s) != -1) {
+                    list = s->init_data->list;
+                } else {
+                    SCLogError(SC_ERR_LUA_ERROR, "Lua and sticky buffer failure");
+                    goto error;
+                }
+            } else
+                list = DETECT_SM_LIST_MATCH;
+        }
 
     } else if (lua->alproto == ALPROTO_HTTP) {
         if (lua->flags & DATATYPE_HTTP_RESPONSE_BODY) {

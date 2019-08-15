@@ -47,7 +47,7 @@
 #include "stream-tcp.h"
 #include "util-byte.h"
 
-static int DetectFtpbounceALMatch(ThreadVars *, DetectEngineThreadCtx *,
+static int DetectFtpbounceALMatch(DetectEngineThreadCtx *,
         Flow *, uint8_t, void *, void *,
         const Signature *, const SigMatchCtx *);
 
@@ -71,7 +71,7 @@ void DetectFtpbounceRegister(void)
     sigmatch_table[DETECT_FTPBOUNCE].Setup = DetectFtpbounceSetup;
     sigmatch_table[DETECT_FTPBOUNCE].AppLayerTxMatch = DetectFtpbounceALMatch;
     sigmatch_table[DETECT_FTPBOUNCE].RegisterTests = DetectFtpbounceRegisterTests;
-    sigmatch_table[DETECT_FTPBOUNCE].url = DOC_URL DOC_VERSION "/rules/ftp-keywords#ftpbounce";
+    sigmatch_table[DETECT_FTPBOUNCE].url = DOC_URL DOC_VERSION "/rules/ftp-keywords.html#ftpbounce";
     sigmatch_table[DETECT_FTPBOUNCE].flags = SIGMATCH_NOOPT;
 
     g_ftp_request_list_id = DetectBufferTypeRegister("ftp_request");
@@ -186,7 +186,7 @@ static int DetectFtpbounceMatchArgs(uint8_t *payload, uint16_t payload_len,
  * \retval 0 no match
  * \retval 1 match
  */
-static int DetectFtpbounceALMatch(ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectFtpbounceALMatch(DetectEngineThreadCtx *det_ctx,
         Flow *f, uint8_t flags,
         void *state, void *txv,
         const Signature *s, const SigMatchCtx *m)

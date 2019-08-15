@@ -52,6 +52,9 @@
 
 #ifdef HAVE_LIBJANSSON
 
+extern bool stats_decoder_events;
+const char *stats_decoder_events_prefix;
+
 /**
  * specify which engine info will be printed in stats log.
  * ALL means both last reload and ruleset stats.
@@ -323,7 +326,6 @@ static int JsonStatsLogger(ThreadVars *tv, void *thread_data, const StatsTable *
     SCReturnInt(0);
 }
 
-#define OUTPUT_BUFFER_SIZE 65535
 static TmEcode JsonStatsLogThreadInit(ThreadVars *t, const void *initdata, void **data)
 {
     JsonStatsLogThread *aft = SCMalloc(sizeof(JsonStatsLogThread));
@@ -341,7 +343,7 @@ static TmEcode JsonStatsLogThreadInit(ThreadVars *t, const void *initdata, void 
     /* Use the Ouptut Context (file pointer and mutex) */
     aft->statslog_ctx = ((OutputCtx *)initdata)->data;
 
-    aft->buffer = MemBufferCreateNew(OUTPUT_BUFFER_SIZE);
+    aft->buffer = MemBufferCreateNew(JSON_OUTPUT_BUFFER_SIZE);
     if (aft->buffer == NULL) {
         SCFree(aft);
         return TM_ECODE_FAILED;
@@ -385,6 +387,14 @@ static OutputInitResult OutputStatsLogInit(ConfNode *conf)
     if(file_ctx == NULL) {
         SCLogError(SC_ERR_STATS_LOG_GENERIC, "couldn't create new file_ctx");
         return result;
+    }
+
+    if (stats_decoder_events &&
+            strcmp(stats_decoder_events_prefix, "decoder") == 0) {
+        SCLogWarning(SC_WARN_EVE_MISSING_EVENTS, "json stats will not display "
+                "all decoder events correctly. See #2225. Set a prefix in "
+                "stats.decoder-events-prefix. In 5.0 the prefix will default "
+                "to 'decoder.event'.");
     }
 
     if (SCConfLogOpenGeneric(conf, file_ctx, DEFAULT_LOG_FILENAME, 1) < 0) {
@@ -448,6 +458,14 @@ static OutputInitResult OutputStatsLogInitSub(ConfNode *conf, OutputCtx *parent_
     OutputStatsCtx *stats_ctx = SCMalloc(sizeof(OutputStatsCtx));
     if (unlikely(stats_ctx == NULL))
         return result;
+
+    if (stats_decoder_events &&
+            strcmp(stats_decoder_events_prefix, "decoder") == 0) {
+        SCLogWarning(SC_WARN_EVE_MISSING_EVENTS, "eve.stats will not display "
+                "all decoder events correctly. See #2225. Set a prefix in "
+                "stats.decoder-events-prefix. In 5.0 the prefix will default "
+                "to 'decoder.event'.");
+    }
 
     stats_ctx->flags = JSON_STATS_TOTALS;
 

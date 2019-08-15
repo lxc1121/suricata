@@ -62,7 +62,7 @@
 static pcre *parse_regex;
 static pcre_extra *parse_regex_study;
 
-static int DetectSshVersionMatch (ThreadVars *, DetectEngineThreadCtx *,
+static int DetectSshVersionMatch (DetectEngineThreadCtx *,
         Flow *, uint8_t, void *, void *,
         const Signature *, const SigMatchCtx *);
 static int DetectSshVersionSetup (DetectEngineCtx *, Signature *, const char *);
@@ -76,11 +76,14 @@ static int g_ssh_banner_list_id = 0;
 void DetectSshVersionRegister(void)
 {
     sigmatch_table[DETECT_AL_SSH_PROTOVERSION].name = "ssh.protoversion";
+    sigmatch_table[DETECT_AL_SSH_PROTOVERSION].desc = "match SSH protocol version";
+    sigmatch_table[DETECT_AL_SSH_PROTOVERSION].url = DOC_URL DOC_VERSION "/rules/ssh-keywords.html#ssh-protoversion";
     sigmatch_table[DETECT_AL_SSH_PROTOVERSION].AppLayerTxMatch = DetectSshVersionMatch;
     sigmatch_table[DETECT_AL_SSH_PROTOVERSION].Setup = DetectSshVersionSetup;
     sigmatch_table[DETECT_AL_SSH_PROTOVERSION].Free  = DetectSshVersionFree;
     sigmatch_table[DETECT_AL_SSH_PROTOVERSION].RegisterTests = DetectSshVersionRegisterTests;
-    sigmatch_table[DETECT_AL_SSH_PROTOVERSION].flags = SIGMATCH_QUOTES_OPTIONAL;
+    sigmatch_table[DETECT_AL_SSH_PROTOVERSION].flags = SIGMATCH_QUOTES_OPTIONAL|SIGMATCH_INFO_DEPRECATED;
+    sigmatch_table[DETECT_AL_SSH_PROTOVERSION].alternative = DETECT_AL_SSH_PROTOCOL;
 
     DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
 
@@ -98,7 +101,7 @@ void DetectSshVersionRegister(void)
  * \retval 0 no match
  * \retval 1 match
  */
-static int DetectSshVersionMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectSshVersionMatch (DetectEngineThreadCtx *det_ctx,
         Flow *f, uint8_t flags, void *state, void *txv,
         const Signature *s, const SigMatchCtx *m)
 {
@@ -173,9 +176,10 @@ static DetectSshVersionData *DetectSshVersionParse (const char *str)
 
         /* We have a correct id option */
         ssh = SCMalloc(sizeof(DetectSshVersionData));
-        if (unlikely(ssh == NULL))
+        if (unlikely(ssh == NULL)) {
+            pcre_free_substring(str_ptr);
             goto error;
-
+        }
         memset(ssh, 0x00, sizeof(DetectSshVersionData));
 
         /* If we expect a protocol version 2 or 1.99 (considered 2, we
@@ -183,14 +187,17 @@ static DetectSshVersionData *DetectSshVersionParse (const char *str)
         if (strcmp("2_compat", str_ptr) == 0) {
             ssh->flags |= SSH_FLAG_PROTOVERSION_2_COMPAT;
             SCLogDebug("will look for ssh protocol version 2 (2, 2.0, 1.99 that's considered as 2");
+            pcre_free_substring(str_ptr);
             return ssh;
         }
 
         ssh->ver = (uint8_t *)SCStrdup((char*)str_ptr);
         if (ssh->ver == NULL) {
+            pcre_free_substring(str_ptr);
             goto error;
         }
         ssh->len = strlen((char *) ssh->ver);
+        pcre_free_substring(str_ptr);
 
         SCLogDebug("will look for ssh %s", ssh->ver);
     }
@@ -255,8 +262,9 @@ error:
  */
 void DetectSshVersionFree(void *ptr)
 {
-    DetectSshVersionData *id_d = (DetectSshVersionData *)ptr;
-    SCFree(id_d);
+    DetectSshVersionData *sshd = (DetectSshVersionData *)ptr;
+    SCFree(sshd->ver);
+    SCFree(sshd);
 }
 
 #ifdef UNITTESTS /* UNITTESTS */

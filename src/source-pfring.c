@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2017 Open Information Security Foundation
+/* Copyright (C) 2007-2019 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -89,7 +89,7 @@ void TmModuleDecodePfringRegister (void)
 }
 
 /**
- * \brief this funciton prints an error message and exits.
+ * \brief this function prints an error message and exits.
  * \param tv pointer to ThreadVars
  * \param initdata pointer to the interface passed from the user
  * \param data pointer gets populated with PfringThreadVars
@@ -120,7 +120,7 @@ static SCMutex pfring_bpf_set_filter_lock = SCMUTEX_INITIALIZER;
 /**
  * \brief Structure to hold thread specific variables.
  */
-typedef struct PfringThreadVars_
+struct PfringThreadVars_
 {
     /* thread specific handle */
     pfring *pd;
@@ -138,7 +138,7 @@ typedef struct PfringThreadVars_
     ThreadVars *tv;
     TmSlot *slot;
 
-    int vlan_disabled;
+    int vlan_in_ext_header;
 
     /* threads count */
     int threads;
@@ -154,7 +154,7 @@ typedef struct PfringThreadVars_
      ChecksumValidationMode checksum_mode;
 
     bool vlan_hdr_warned;
-} PfringThreadVars;
+};
 
 /**
  * \brief Registration Function for RecievePfring.
@@ -198,18 +198,17 @@ static inline void PfringDumpCounters(PfringThreadVars *ptv)
          * to the interface counter */
         uint64_t th_pkts = StatsGetLocalCounterValue(ptv->tv, ptv->capture_kernel_packets);
         uint64_t th_drops = StatsGetLocalCounterValue(ptv->tv, ptv->capture_kernel_drops);
-#ifdef HAVE_PF_RING_FLOW_OFFLOAD
-        uint64_t th_bypassed = StatsGetLocalCounterValue(ptv->tv, ptv->capture_bypassed);
-#endif
         SC_ATOMIC_ADD(ptv->livedev->pkts, pfring_s.recv - th_pkts);
         SC_ATOMIC_ADD(ptv->livedev->drop, pfring_s.drop - th_drops);
-#ifdef HAVE_PF_RING_FLOW_OFFLOAD
-        SC_ATOMIC_ADD(ptv->livedev->bypassed, pfring_s.shunt - th_bypassed);
-#endif
         StatsSetUI64(ptv->tv, ptv->capture_kernel_packets, pfring_s.recv);
         StatsSetUI64(ptv->tv, ptv->capture_kernel_drops, pfring_s.drop);
+
 #ifdef HAVE_PF_RING_FLOW_OFFLOAD
-        StatsSetUI64(ptv->tv, ptv->capture_bypassed, pfring_s.shunt);
+        if (ptv->flags & PFRING_FLAGS_BYPASS) {
+            uint64_t th_bypassed = StatsGetLocalCounterValue(ptv->tv, ptv->capture_bypassed);
+            SC_ATOMIC_ADD(ptv->livedev->bypassed, pfring_s.shunt - th_bypassed);
+            StatsSetUI64(ptv->tv, ptv->capture_bypassed, pfring_s.shunt);
+        }
 #endif
     }
 }
@@ -218,7 +217,7 @@ static inline void PfringDumpCounters(PfringThreadVars *ptv)
  * \brief Pfring Packet Process function.
  *
  * This function fills in our packet structure from libpfring.
- * From here the packets are picked up by the  DecodePfring thread.
+ * From here the packets are picked up by the DecodePfring thread.
  *
  * \param user pointer to PfringThreadVars
  * \param h pointer to pfring packet header
@@ -254,16 +253,15 @@ static inline void PfringProcessPacket(void *user, struct pfring_pkthdr *h, Pack
      * PF_RING should put it back in all cases, but as a extra
      * precaution keep the check here. If the vlan header is
      * part of the raw packet, the vlan_offset will be set.
-     * So is it is not set, use the parsed info from PF_RING's
+     * So if it is not set, use the parsed info from PF_RING's
      * extended header.
      */
-    if ((!ptv->vlan_disabled) &&
+    if (ptv->vlan_in_ext_header &&
         h->extended_hdr.parsed_pkt.offset.vlan_offset == 0 &&
         h->extended_hdr.parsed_pkt.vlan_id)
     {
         p->vlan_id[0] = h->extended_hdr.parsed_pkt.vlan_id & 0x0fff;
         p->vlan_idx = 1;
-        p->vlanh[0] = NULL;
 
         if (!ptv->vlan_hdr_warned) {
             SCLogWarning(SC_ERR_PF_RING_VLAN, "no VLAN header in the raw "
@@ -436,7 +434,7 @@ TmEcode ReceivePfringLoop(ThreadVars *tv, void *data, void *slot)
             }
 
             /* pfring didn't use the packet yet */
-            TmThreadsCaptureInjectPacket(tv, ptv->slot, p);
+            TmThreadsCaptureHandleTimeout(tv, ptv->slot, p);
 
         } else {
             SCLogError(SC_ERR_PF_RING_RECV,"pfring_recv error  %" PRId32 "", r);
@@ -533,9 +531,8 @@ TmEcode ReceivePfringThreadInit(ThreadVars *tv, const void *initdata, void **dat
 
     opflag = PF_RING_PROMISC;
 
-    /* if suri uses VLAN and if we have a recent kernel, we need
-     * to use parsed_pkt to get VLAN info */
-    if ((! ptv->vlan_disabled) && SCKernelVersionIsAtLeast(3, 0)) {
+    /* if we have a recent kernel, we need to use parsed_pkt to get VLAN info */
+    if (ptv->vlan_in_ext_header) {
         opflag |= PF_RING_LONG_HEADER;
     }
 
@@ -615,8 +612,9 @@ TmEcode ReceivePfringThreadInit(ThreadVars *tv, const void *initdata, void **dat
             SCMutexUnlock(&pfring_bpf_set_filter_lock);
 
             if (rc < 0) {
-                SCLogInfo("Set PF_RING bpf filter \"%s\" failed.",
-                          ptv->bpf_filter);
+                SCLogError(SC_ERR_INVALID_VALUE, "Failed to compile BPF \"%s\"",
+                           ptv->bpf_filter);
+                return TM_ECODE_FAILED;
             }
         }
     }
@@ -630,26 +628,19 @@ TmEcode ReceivePfringThreadInit(ThreadVars *tv, const void *initdata, void **dat
             ptv->tv);
 #endif
 
-    /* A bit strange to have this here but we only have vlan information
-     * during reading so we need to know if we want to keep vlan during
-     * the capture phase */
-    int vlanbool = 0;
-    if ((ConfGetBool("vlan.use-for-tracking", &vlanbool)) == 1 && vlanbool == 0) {
-        ptv->vlan_disabled = 1;
-    }
-
-    /* If kernel is older than 3.8, VLAN is not stripped so we don't
+    /* If kernel is older than 3.0, VLAN is not stripped so we don't
      * get the info from packt extended header but we will use a standard
      * parsing */
+    ptv->vlan_in_ext_header = 1;
     if (! SCKernelVersionIsAtLeast(3, 0)) {
-        ptv->vlan_disabled = 1;
+        ptv->vlan_in_ext_header = 0;
     }
 
-    /* If VLAN tracking is disabled, set cluster type to 5-tuple or in case of a
-     * ZC interface, do nothing */
-    if (ptv->vlan_disabled && ptv->ctype == CLUSTER_FLOW &&
+    /* If VLAN tags are not in the extended header, set cluster type to 5-tuple
+     * or in case of a ZC interface, do nothing */
+    if ((! ptv->vlan_in_ext_header) && ptv->ctype == CLUSTER_FLOW &&
             strncmp(ptv->interface, "zc", 2) != 0) {
-        SCLogPerf("VLAN disabled, setting cluster type to CLUSTER_FLOW_5_TUPLE");
+        SCLogPerf("VLAN not in extended header, setting cluster type to CLUSTER_FLOW_5_TUPLE");
         rc = pfring_set_cluster(ptv->pd, ptv->cluster_id, CLUSTER_FLOW_5_TUPLE);
 
         if (rc != 0) {

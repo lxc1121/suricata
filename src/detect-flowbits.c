@@ -45,11 +45,11 @@
 #include "util-unittest.h"
 #include "util-debug.h"
 
-#define PARSE_REGEX         "([a-z]+)(?:,\\s*(.*))?"
+#define PARSE_REGEX         "^([a-z]+)(?:,\\s*(.*))?"
 static pcre *parse_regex;
 static pcre_extra *parse_regex_study;
 
-int DetectFlowbitMatch (ThreadVars *, DetectEngineThreadCtx *, Packet *,
+int DetectFlowbitMatch (DetectEngineThreadCtx *, Packet *,
         const Signature *, const SigMatchCtx *);
 static int DetectFlowbitSetup (DetectEngineCtx *, Signature *, const char *);
 void DetectFlowbitFree (void *);
@@ -123,7 +123,7 @@ static int DetectFlowbitMatchIsnotset (Packet *p, const DetectFlowbitsData *fd)
  *        -1: error
  */
 
-int DetectFlowbitMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx, Packet *p,
+int DetectFlowbitMatch (DetectEngineThreadCtx *det_ctx, Packet *p,
         const Signature *s, const SigMatchCtx *ctx)
 {
     const DetectFlowbitsData *fd = (const DetectFlowbitsData *)ctx;
@@ -277,6 +277,11 @@ int DetectFlowbitSetup (DetectEngineCtx *de_ctx, Signature *s, const char *rawst
             /* modifiers, only run when entire sig has matched */
             SigMatchAppendSMToList(s, sm, DETECT_SM_LIST_POSTMATCH);
             break;
+
+        // suppress coverity warning as scan-build-7 warns w/o this.
+        // coverity[deadcode : FALSE]
+        default:
+            goto error;
     }
 
     return 0;
@@ -507,7 +512,7 @@ void DetectFlowbitsAnalyze(DetectEngineCtx *de_ctx)
             SCLogDebug("GET flowbit %s/%u: SID %u", varname, i, s->id);
 
             if (to_state) {
-                s->flags |= SIG_FLAG_STATE_MATCH;
+                s->init_data->init_flags |= SIG_FLAG_INIT_STATE_MATCH;
                 SCLogDebug("made SID %u stateful because it depends on "
                         "stateful rules that set flowbit %s", s->id, varname);
             }
@@ -762,6 +767,9 @@ static int FlowBitsTestSig02(void)
     FAIL_IF_NOT_NULL(s);
 
     s = de_ctx->sig_list = SigInit(de_ctx,"alert ip any any -> any any (msg:\"toggle rule need an option\"; flowbits:toggle; content:\"GET \"; sid:5;)");
+    FAIL_IF_NOT_NULL(s);
+
+    s = de_ctx->sig_list = SigInit(de_ctx,"alert ip any any -> any any (msg:\"!set is not an option\"; flowbits:!set,myerr; content:\"GET \"; sid:6;)");
     FAIL_IF_NOT_NULL(s);
 
     SigGroupBuild(de_ctx);

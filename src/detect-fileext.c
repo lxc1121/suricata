@@ -51,7 +51,7 @@
 #include "stream-tcp.h"
 #include "detect-fileext.h"
 
-static int DetectFileextMatch (ThreadVars *, DetectEngineThreadCtx *, Flow *,
+static int DetectFileextMatch (DetectEngineThreadCtx *, Flow *,
         uint8_t, File *, const Signature *, const SigMatchCtx *);
 static int DetectFileextSetup (DetectEngineCtx *, Signature *, const char *);
 static void DetectFileextRegisterTests(void);
@@ -71,6 +71,7 @@ void DetectFileextRegister(void)
     sigmatch_table[DETECT_FILEEXT].Free  = DetectFileextFree;
     sigmatch_table[DETECT_FILEEXT].RegisterTests = DetectFileextRegisterTests;
     sigmatch_table[DETECT_FILEEXT].flags = SIGMATCH_QUOTES_OPTIONAL|SIGMATCH_HANDLE_NEGATION;
+    sigmatch_table[DETECT_FILEEXT].alternative = DETECT_FILE_NAME;
 
     g_file_match_list_id = DetectBufferTypeRegister("files");
 
@@ -92,7 +93,7 @@ void DetectFileextRegister(void)
  * \retval 0 no match
  * \retval 1 match
  */
-static int DetectFileextMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx,
+static int DetectFileextMatch (DetectEngineThreadCtx *det_ctx,
         Flow *f, uint8_t flags, File *file, const Signature *s, const SigMatchCtx *m)
 {
     SCEnter();
@@ -116,9 +117,7 @@ static int DetectFileextMatch (ThreadVars *t, DetectEngineThreadCtx *det_ctx,
             ret = 1;
             SCLogDebug("File ext found");
         }
-    }
-
-    if (ret == 0 && (fileext->flags & DETECT_CONTENT_NEGATED)) {
+    } else if (fileext->flags & DETECT_CONTENT_NEGATED) {
         SCLogDebug("negated match");
         ret = 1;
     }
@@ -168,6 +167,7 @@ static DetectFileextData *DetectFileextParse (const char *str, bool negate)
             memcpy(ext, fileext->ext, fileext->len);
             ext[fileext->len] = '\0';
             SCLogDebug("will look for fileext %s", ext);
+            SCFree(ext);
         }
     }
 #endif
