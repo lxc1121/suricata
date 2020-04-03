@@ -100,7 +100,7 @@ static char stats_enabled = TRUE;
 
 /**< add decoder events as stats? enabled by default */
 bool stats_decoder_events = true;
-const char *stats_decoder_events_prefix = "decoder";
+const char *stats_decoder_events_prefix = "decoder.event";
 /**< add stream events as stats? disabled by default */
 bool stats_stream_events = false;
 
@@ -115,6 +115,11 @@ static SCMutex stats_table_mutex = SCMUTEX_INITIALIZER;
 static int stats_loggers_active = 1;
 
 static uint16_t counters_global_id = 0;
+
+bool StatsEnabled(void)
+{
+    return (stats_enabled == TRUE);
+}
 
 static void StatsPublicThreadContextInit(StatsPublicThreadContext *t)
 {
@@ -228,10 +233,6 @@ static ConfNode *GetConfig(void) {
 static void StatsInitCtxPreOutput(void)
 {
     SCEnter();
-#ifdef AFLFUZZ_DISABLE_MGTTHREADS
-    stats_enabled = FALSE;
-    SCReturn;
-#endif
     ConfNode *stats = GetConfig();
     if (stats != NULL) {
         const char *enabled = ConfNodeLookupChildValue(stats, "enabled");
@@ -240,6 +241,14 @@ static void StatsInitCtxPreOutput(void)
             SCLogDebug("Stats module has been disabled");
             SCReturn;
         }
+        /* warn if we are using legacy config to enable stats */
+        ConfNode *gstats = ConfGetNode("stats");
+        if (gstats == NULL) {
+            SCLogWarning(SC_ERR_STATS_LOG_GENERIC, "global stats config is missing. "
+                    "Stats enabled through legacy stats.log. "
+                    "See %s%s/configuration/suricata-yaml.html#stats", DOC_URL, DOC_VERSION);
+        }
+
         const char *interval = ConfNodeLookupChildValue(stats, "interval");
         if (interval != NULL)
             stats_tts = (uint32_t) atoi(interval);
@@ -256,12 +265,7 @@ static void StatsInitCtxPreOutput(void)
 
         const char *prefix = NULL;
         if (ConfGet("stats.decoder-events-prefix", &prefix) != 1) {
-            prefix = "decoder";
-            SCLogWarning(SC_WARN_DEFAULT_WILL_CHANGE, "in 5.0 the default "
-                    "for decoder event stats will go from "
-                    "'decoder.<proto>.<event>' to 'decoder.event.<proto>.<event>'. "
-                    "See ticket #2225. To suppress this message, "
-                    "set stats.decoder-events-prefix in the yaml.");
+            prefix = "decoder.event";
         }
         stats_decoder_events_prefix = prefix;
     }
@@ -280,7 +284,7 @@ static void StatsInitCtxPostOutput(void)
         exit(EXIT_FAILURE);
     }
 
-    if (!OutputStatsLoggersRegistered()) {
+    if (stats_enabled && !OutputStatsLoggersRegistered()) {
         stats_loggers_active = 0;
 
         /* if the unix command socket is enabled we do the background
@@ -491,7 +495,7 @@ static void *StatsWakeupThread(void *arg)
             tv->perf_public_ctx.perf_flag = 1;
 
             if (tv->inq != NULL) {
-                PacketQueue *q = &trans_q[tv->inq->id];
+                PacketQueue *q = tv->inq->pq;
                 SCCondSignal(&q->cond_q);
             }
 
@@ -809,15 +813,19 @@ TmEcode StatsOutputCounterSocket(json_t *cmd,
     json_t *message = NULL;
     TmEcode r = TM_ECODE_OK;
 
-    SCMutexLock(&stats_table_mutex);
-    if (stats_table.start_time == 0) {
+    if (!stats_enabled) {
         r = TM_ECODE_FAILED;
-        message = json_string("stats not yet synchronized");
+        message = json_string("stats are disabled in the config");
     } else {
-        message = StatsToJSON(&stats_table, JSON_STATS_TOTALS|JSON_STATS_THREADS);
+        SCMutexLock(&stats_table_mutex);
+        if (stats_table.start_time == 0) {
+            r = TM_ECODE_FAILED;
+            message = json_string("stats not yet synchronized");
+        } else {
+            message = StatsToJSON(&stats_table, JSON_STATS_TOTALS|JSON_STATS_THREADS);
+        }
+        SCMutexUnlock(&stats_table_mutex);
     }
-    SCMutexUnlock(&stats_table_mutex);
-
     json_object_set_new(answer, "message", message);
     return r;
 }

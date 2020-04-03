@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -19,6 +19,7 @@
  * \file
  *
  * \author Brian Rectanus <brectanu@gmail.com>
+ * \author Jeff Lucovsky <jeff@lucovsky.org>
  *
  * Implements byte_test keyword.
  */
@@ -47,20 +48,24 @@
  * \brief Regex for parsing our options
  */
 /** \todo We probably just need a simple tokenizer here */
+
+/* PCRE supports 9 substrings so the 2nd and 3rd (negation, operator) and
+ * 4th and 5th (test value, offset) are combined
+ */
+#define VALID_KW "relative|big|little|string|oct|dec|hex|dce|bitmask"
 #define PARSE_REGEX  "^\\s*" \
-                     "([^\\s,]+)" \
-                     "\\s*,\\s*(\\!?)\\s*([^\\s,]*)" \
-                     "\\s*,\\s*([^\\s,]+)" \
-                     "\\s*,\\s*([^\\s,]+)" \
-                     "(?:\\s*,\\s*([^\\s,]+))?" \
-                     "(?:\\s*,\\s*([^\\s,]+))?" \
-                     "(?:\\s*,\\s*([^\\s,]+))?" \
-                     "(?:\\s*,\\s*([^\\s,]+))?" \
-                     "(?:\\s*,\\s*([^\\s,]+))?" \
+                     "([^\\s,]+)\\s*,\\s*" \
+                     "(\\!?\\s*[^\\s,]*)" \
+                     "\\s*,\\s*([^\\s,]+\\s*,\\s*[^\\s,]+)" \
+                     "(?:\\s*,\\s*((?:"VALID_KW")\\s+[^\\s,]+|["VALID_KW"]+))?" \
+                     "(?:\\s*,\\s*((?:"VALID_KW")\\s+[^\\s,]+|["VALID_KW"]+))?" \
+                     "(?:\\s*,\\s*((?:"VALID_KW")\\s+[^\\s,]+|["VALID_KW"]+))?" \
+                     "(?:\\s*,\\s*((?:"VALID_KW")\\s+[^\\s,]+|["VALID_KW"]+))?" \
+                     "(?:\\s*,\\s*((?:"VALID_KW")\\s+[^\\s,]+|["VALID_KW"]+))?" \
+                     "(?:\\s*,\\s*((?:"VALID_KW")\\s+[^\\s,]+|["VALID_KW"]+))?" \
                      "\\s*$"
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 static int DetectBytetestMatch(DetectEngineThreadCtx *det_ctx,
                         Packet *p, const Signature *s, const SigMatchCtx *ctx);
@@ -71,12 +76,14 @@ static void DetectBytetestRegisterTests(void);
 void DetectBytetestRegister (void)
 {
     sigmatch_table[DETECT_BYTETEST].name = "byte_test";
+    sigmatch_table[DETECT_BYTETEST].desc = "extract <num of bytes> and perform an operation selected with <operator> against the value in <test value> at a particular <offset>";
+    sigmatch_table[DETECT_BYTETEST].url = DOC_URL DOC_VERSION "/rules/payload-keywords.html#byte-test";
     sigmatch_table[DETECT_BYTETEST].Match = DetectBytetestMatch;
     sigmatch_table[DETECT_BYTETEST].Setup = DetectBytetestSetup;
     sigmatch_table[DETECT_BYTETEST].Free  = DetectBytetestFree;
     sigmatch_table[DETECT_BYTETEST].RegisterTests = DetectBytetestRegisterTests;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
 /** \brief Bytetest detection code
@@ -93,13 +100,13 @@ void DetectBytetestRegister (void)
  */
 int DetectBytetestDoMatch(DetectEngineThreadCtx *det_ctx,
                           const Signature *s, const SigMatchCtx *ctx,
-                          uint8_t *payload, uint32_t payload_len,
+                          const uint8_t *payload, uint32_t payload_len,
                           uint8_t flags, int32_t offset, uint64_t value)
 {
     SCEnter();
 
     const DetectBytetestData *data = (const DetectBytetestData *)ctx;
-    uint8_t *ptr = NULL;
+    const uint8_t *ptr = NULL;
     int32_t len = 0;
     uint64_t val = 0;
     int extbytes;
@@ -127,7 +134,6 @@ int DetectBytetestDoMatch(DetectEngineThreadCtx *det_ctx,
         if (ptr == NULL || len <= 0) {
             SCReturnInt(0);
         }
-        //PrintRawDataFp(stdout,ptr,len);
     }
     else {
         SCLogDebug("absolute, data->offset %"PRIi32"", data->offset);
@@ -145,14 +151,14 @@ int DetectBytetestDoMatch(DetectEngineThreadCtx *det_ctx,
         SCReturnInt(0);
     }
 
-    neg = flags & DETECT_BYTETEST_NEGOP;
+    neg = data->neg_op;
 
     /* Extract the byte data */
     if (flags & DETECT_BYTETEST_STRING) {
         extbytes = ByteExtractStringUint64(&val, data->base,
                                            data->nbytes, (const char *)ptr);
         if (extbytes <= 0) {
-            /* strtoull() return 0 if there is no numeric value in data string */
+            /* ByteExtractStringUint64() returns 0 if there is no numeric value in data string */
             if (val == 0) {
                 SCLogDebug("No Numeric value");
                 SCReturnInt(0);
@@ -178,6 +184,16 @@ int DetectBytetestDoMatch(DetectEngineThreadCtx *det_ctx,
 
         SCLogDebug("comparing numeric 0x%" PRIx64 " %s%u 0x%" PRIx64,
                val, (neg ? "!" : ""), data->op, data->value);
+    }
+
+    /* apply bitmask, if any and then right-shift 1 bit for each trailing 0 in
+     * the bitmask. Note that it's one right shift for each trailing zero (not bit).
+     */
+    if (flags & DETECT_BYTETEST_BITMASK) {
+        val &= data->bitmask;
+        if (val && data->bitmask_shift_count) {
+            val = val >> data->bitmask_shift_count;
+        }
     }
 
     /* Compare using the configured operator */
@@ -209,15 +225,15 @@ int DetectBytetestDoMatch(DetectEngineThreadCtx *det_ctx,
             }
             break;
         case DETECT_BYTETEST_OP_GE:
-        if (val >= value) {
-            match = 1;
-        }
-        break;
+            if (val >= value) {
+                match = 1;
+            }
+            break;
         case DETECT_BYTETEST_OP_LE:
-        if (val <= value) {
-            match = 1;
-        }
-        break;
+            if (val <= value) {
+                match = 1;
+            }
+            break;
         default:
             /* Should never get here as we handle this in parsing. */
             SCReturnInt(-1);
@@ -248,7 +264,8 @@ static DetectBytetestData *DetectBytetestParse(const char *optstr, char **value,
         NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
         NULL
     };
-#define MAX_SUBSTRINGS 30
+    char *test_value =  NULL;
+    char *data_offset = NULL;
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
     int i;
@@ -256,13 +273,14 @@ static DetectBytetestData *DetectBytetestParse(const char *optstr, char **value,
     const char *str_ptr = NULL;
 
     /* Execute the regex and populate args with captures. */
-    ret = pcre_exec(parse_regex, parse_regex_study, optstr,
-                    strlen(optstr), 0, 0, ov, MAX_SUBSTRINGS);
-    if (ret < 6 || ret > 10) {
+    ret = DetectParsePcreExec(&parse_regex, optstr, 0, 0, ov, MAX_SUBSTRINGS);
+    if (ret < 4 || ret > 9) {
         SCLogError(SC_ERR_PCRE_PARSE, "parse error, ret %" PRId32
                ", string %s", ret, optstr);
         goto error;
     }
+
+    /* Subtract two since two values  are conjoined */
     for (i = 0; i < (ret - 1); i++) {
         res = pcre_get_substring((char *)optstr, ov, MAX_SUBSTRINGS,
                                  i + 1, &str_ptr);
@@ -271,7 +289,16 @@ static DetectBytetestData *DetectBytetestParse(const char *optstr, char **value,
                    "for arg %d", i + 1);
             goto error;
         }
-        args[i] = (char *)str_ptr;
+        /* args[2] is comma separated test value, offset */
+        if (i == 2) {
+            test_value = (char *) str_ptr;
+            data_offset = SCStrdup((char *) str_ptr);
+            if (data_offset == NULL) {
+                goto error;
+            }
+        } else {
+            args[i] = (char *)str_ptr;
+        }
     }
 
     /* Initialize the data */
@@ -281,39 +308,51 @@ static DetectBytetestData *DetectBytetestParse(const char *optstr, char **value,
     data->base = DETECT_BYTETEST_BASE_UNSET;
     data->flags = 0;
 
-
     /*
      * The first four options are required and positional.  The
      * remaining arguments are flags and are not positional.
+     *
+     * The first four options have been collected into three
+     * arguments:
+     * - #1 -- byte count
+     * - #2 -- operator, including optional negation (!)
+     * - #3 -- test value and offset, comma separated
      */
 
     /* Number of bytes */
-    if (ByteExtractStringUint32(&nbytes, 10, 0, args[0]) <= 0) {
+    if (StringParseUint32(&nbytes, 10, 0, args[0]) <= 0) {
         SCLogError(SC_ERR_INVALID_VALUE, "Malformed number of bytes: %s", str_ptr);
         goto error;
     }
 
-    /* Operator is next two args: neg + op */
+    /* The operator is the next arg; it may contain a negation ! as the first char */
     data->op = 0;
-    if (args[1] != NULL && *args[1] == '!') {
-        data->flags |= DETECT_BYTETEST_NEGOP;
-    }
-
-    if (args[2] != NULL) {
-        if ((strcmp("=", args[2]) == 0) || ((data->flags & DETECT_BYTETEST_NEGOP)
-                && strcmp("", args[2]) == 0)) {
+    if (args[1] != NULL) {
+        int op_offset = 0;
+        char *op_ptr;
+        if (args[1][op_offset] == '!') {
+            data->neg_op = true;
+            op_ptr = &args[1][1];
+            while (isspace((char)*op_ptr) || (*op_ptr == ',')) op_ptr++;
+            op_offset = op_ptr - &args[1][0];
+        } else {
+            data->neg_op = false;
+        }
+        op_ptr = args[1] + op_offset;
+        if ((strcmp("=", op_ptr) == 0) || (data->neg_op
+                && strcmp("", op_ptr) == 0)) {
             data->op |= DETECT_BYTETEST_OP_EQ;
-        } else if (strcmp("<", args[2]) == 0) {
+        } else if (strcmp("<", op_ptr) == 0) {
             data->op |= DETECT_BYTETEST_OP_LT;
-        } else if (strcmp(">", args[2]) == 0) {
+        } else if (strcmp(">", op_ptr) == 0) {
             data->op |= DETECT_BYTETEST_OP_GT;
-        } else if (strcmp("&", args[2]) == 0) {
+        } else if (strcmp("&", op_ptr) == 0) {
             data->op |= DETECT_BYTETEST_OP_AND;
-        } else if (strcmp("^", args[2]) == 0) {
+        } else if (strcmp("^", op_ptr) == 0) {
             data->op |= DETECT_BYTETEST_OP_OR;
-        } else if (strcmp(">=", args[2]) == 0) {
+        } else if (strcmp(">=", op_ptr) == 0) {
             data->op |= DETECT_BYTETEST_OP_GE;
-        } else if (strcmp("<=", args[2]) == 0) {
+        } else if (strcmp("<=", op_ptr) == 0) {
             data->op |= DETECT_BYTETEST_OP_LE;
         } else {
             SCLogError(SC_ERR_INVALID_OPERATOR, "Invalid operator");
@@ -321,45 +360,67 @@ static DetectBytetestData *DetectBytetestParse(const char *optstr, char **value,
         }
     }
 
-    /* Value */
-    if (args[3][0] != '-' && isalpha((unsigned char)args[3][0])) {
-        if (value == NULL) {
-            SCLogError(SC_ERR_INVALID_ARGUMENT, "byte_test supplied with "
-                       "var name for value.  \"value\" argument supplied to "
-                       "this function has to be non-NULL");
-            goto error;
-        }
-        *value = SCStrdup(args[3]);
-        if (*value == NULL)
-            goto error;
-    } else {
-        if (ByteExtractStringUint64(&data->value, 0, 0, args[3]) <= 0) {
-            SCLogError(SC_ERR_INVALID_VALUE, "Malformed value: %s", str_ptr);
-            goto error;
+    if (test_value) {
+        /*
+         * test_value was created while fetching strings and contains the test value and offset, comma separated. The
+         * values was allocated by test_value (pcre_get_substring) and data_offset (SCStrdup), respectively; e.g.,
+         * test_value,offset
+         */
+        char *end_ptr = test_value;
+        while (!(isspace((unsigned char)*end_ptr) || (*end_ptr == ','))) end_ptr++;
+        *end_ptr = '\0';
+
+        if (test_value[0] != '-' && isalpha((unsigned char)test_value[0])) {
+            if (value == NULL) {
+                SCLogError(SC_ERR_INVALID_ARGUMENT, "byte_test supplied with "
+                           "var name for value.  \"value\" argument supplied to "
+                           "this function has to be non-NULL");
+                goto error;
+            }
+            *value = SCStrdup(test_value);
+            if (*value == NULL)
+                goto error;
+        } else {
+            if (StringParseUint64(&data->value, 0, 0, test_value) <= 0) {
+                SCLogError(SC_ERR_INVALID_VALUE, "Malformed value: %s", test_value);
+                goto error;
+            }
         }
     }
 
-    /* Offset */
-    if (args[4][0] != '-' && isalpha((unsigned char)args[4][0])) {
-        if (offset == NULL) {
-            SCLogError(SC_ERR_INVALID_ARGUMENT, "byte_test supplied with "
-                       "var name for offset.  \"offset\" argument supplied to "
-                       "this function has to be non-NULL");
-            goto error;
-        }
-        *offset = SCStrdup(args[4]);
-        if (*offset == NULL)
-            goto error;
-    } else {
-        if (ByteExtractStringInt32(&data->offset, 0, 0, args[4]) <= 0) {
-            SCLogError(SC_ERR_INVALID_VALUE, " Malformed offset: %s", str_ptr);
-            goto error;
+    /* Offset -- note that this *also* contains test_value, offset so parse accordingly */
+    if (data_offset) {
+        char *end_ptr = data_offset;
+        while (!(isspace((unsigned char)*end_ptr) || (*end_ptr == ','))) end_ptr++;
+        str_ptr = ++end_ptr;
+        while (isspace((unsigned char)*str_ptr) || (*str_ptr == ',')) str_ptr++;
+        end_ptr = (char *)str_ptr;
+        while (!(isspace((unsigned char)*end_ptr) || (*end_ptr == ',')) && (*end_ptr != '\0'))
+            end_ptr++;
+        memmove(data_offset, str_ptr, end_ptr - str_ptr);
+        data_offset[end_ptr-str_ptr] = '\0';
+        if (data_offset[0] != '-' && isalpha((unsigned char)data_offset[0])) {
+            if (data_offset == NULL) {
+                SCLogError(SC_ERR_INVALID_ARGUMENT, "byte_test supplied with "
+                           "var name for offset.  \"offset\" argument supplied to "
+                           "this function has to be non-NULL");
+                goto error;
+            }
+            *offset = SCStrdup(data_offset);
+            if (*offset == NULL)
+                goto error;
+        } else {
+            if (StringParseInt32(&data->offset, 0, 0, data_offset) <= 0) {
+                SCLogError(SC_ERR_INVALID_VALUE, "Malformed offset: %s", data_offset);
+                goto error;
+            }
         }
     }
 
     /* The remaining options are flags. */
     /** \todo Error on dups? */
-    for (i = 5; i < (ret - 1); i++) {
+    int bitmask_index = -1;
+    for (i = 3; i < (ret - 1); i++) {
         if (args[i] != NULL) {
             if (strcmp("relative", args[i]) == 0) {
                 data->flags |= DETECT_BYTETEST_RELATIVE;
@@ -380,6 +441,9 @@ static DetectBytetestData *DetectBytetestParse(const char *optstr, char **value,
                 data->flags |= DETECT_BYTETEST_LITTLE;
             } else if (strcasecmp("dce", args[i]) == 0) {
                 data->flags |= DETECT_BYTETEST_DCE;
+            } else if (strncasecmp("bitmask", args[i], strlen("bitmask")) == 0) {
+                data->flags |= DETECT_BYTETEST_BITMASK;
+                bitmask_index = i;
             } else {
                 SCLogError(SC_ERR_UNKNOWN_VALUE, "Unknown value: \"%s\"",
                         args[i]);
@@ -416,16 +480,38 @@ static DetectBytetestData *DetectBytetestParse(const char *optstr, char **value,
     /* This is max 23 so it will fit in a byte (see above) */
     data->nbytes = (uint8_t)nbytes;
 
+    if (bitmask_index != -1 && data->flags & DETECT_BYTETEST_BITMASK) {
+        if (ByteExtractStringUint32(&data->bitmask, 0, 0, args[bitmask_index]+strlen("bitmask")) <= 0) {
+            SCLogError(SC_ERR_INVALID_VALUE, "Malformed bitmask value: %s", args[bitmask_index]+strlen("bitmask"));
+            goto error;
+        }
+        /* determine how many trailing 0's are in the bitmask. This will be used
+         * to rshift the value after applying the bitmask
+         */
+        data->bitmask_shift_count = 0;
+        if (data->bitmask) {
+            uint32_t bmask = data->bitmask;
+            while (!(bmask & 0x1)){
+                bmask = bmask >> 1;
+                data->bitmask_shift_count++;
+            }
+        }
+    }
+
     for (i = 0; i < (ret - 1); i++){
         if (args[i] != NULL) SCFree(args[i]);
     }
+    if (data_offset) SCFree(data_offset);
+    if (test_value) SCFree(test_value);
     return data;
 
 error:
     for (i = 0; i < (ret - 1); i++){
         if (args[i] != NULL) SCFree(args[i]);
     }
-    if (data != NULL) DetectBytetestFree(data);
+    if (data_offset) SCFree(data_offset);
+    if (test_value) SCFree(test_value);
+    if (data) SCFree(data);
     return NULL;
 }
 
@@ -578,6 +664,8 @@ static void DetectBytetestFree(void *ptr)
 /* UNITTESTS */
 #ifdef UNITTESTS
 #include "util-unittest-helper.h"
+#include "app-layer-parser.h"
+#include "flow-util.h"
 static int g_file_data_buffer_id = 0;
 static int g_dce_stub_data_buffer_id = 0;
 
@@ -611,7 +699,7 @@ static int DetectBytetestTestParse02(void)
             && (data->nbytes == 4)
             && (data->value == 1)
             && (data->offset == 0)
-            && (data->flags == DETECT_BYTETEST_NEGOP)
+            && (data->neg_op)
             && (data->base == DETECT_BYTETEST_BASE_UNSET))
         {
             result = 1;
@@ -635,8 +723,8 @@ static int DetectBytetestTestParse03(void)
             && (data->nbytes == 4)
             && (data->value == 1)
             && (data->offset == 0)
-            && (data->flags == ( DETECT_BYTETEST_NEGOP
-                                |DETECT_BYTETEST_RELATIVE))
+            && (data->neg_op)
+            && (data->flags == DETECT_BYTETEST_RELATIVE)
             && (data->base == DETECT_BYTETEST_BASE_UNSET))
         {
             result = 1;
@@ -660,8 +748,8 @@ static int DetectBytetestTestParse04(void)
             && (data->nbytes == 4)
             && (data->value == 1)
             && (data->offset == 0)
-            && (data->flags == ( DETECT_BYTETEST_NEGOP
-                                |DETECT_BYTETEST_STRING))
+            && (data->neg_op)
+            && (data->flags == DETECT_BYTETEST_STRING)
             && (data->base == DETECT_BYTETEST_BASE_OCT))
         {
             result = 1;
@@ -733,7 +821,7 @@ static int DetectBytetestTestParse07(void)
             && (data->nbytes == 4)
             && (data->value == 5)
             && (data->offset == 0)
-            && (data->flags == 4)
+            && (data->flags & DETECT_BYTETEST_BIG)
             && (data->base == DETECT_BYTETEST_BASE_UNSET))
         {
             result = 1;
@@ -781,7 +869,7 @@ static int DetectBytetestTestParse09(void)
             && (data->nbytes == 4)
             && (data->value == 5)
             && (data->offset == 0)
-            && (data->flags == DETECT_BYTETEST_NEGOP)
+            && (data->neg_op)
             && (data->base == DETECT_BYTETEST_BASE_UNSET))
         {
             result = 1;
@@ -805,7 +893,8 @@ static int DetectBytetestTestParse10(void)
             && (data->nbytes == 4)
             && (data->value == 5)
             && (data->offset == 0)
-            && (data->flags == (DETECT_BYTETEST_NEGOP|DETECT_BYTETEST_LITTLE))
+            && (data->neg_op)
+            && (data->flags == DETECT_BYTETEST_LITTLE)
             && (data->base == DETECT_BYTETEST_BASE_UNSET))
         {
             result = 1;
@@ -829,8 +918,8 @@ static int DetectBytetestTestParse11(void)
             && (data->nbytes == 4)
             && (data->value == 5)
             && (data->offset == 0)
-            && (data->flags == ( DETECT_BYTETEST_NEGOP
-                                |DETECT_BYTETEST_LITTLE
+            && (data->neg_op)
+            && (data->flags == (DETECT_BYTETEST_LITTLE
                                 |DETECT_BYTETEST_STRING
                                 |DETECT_BYTETEST_RELATIVE))
             && (data->base == DETECT_BYTETEST_BASE_HEX))
@@ -982,7 +1071,10 @@ static int DetectBytetestTestParse19(void)
 
     int result = 1;
 
-    s->alproto = ALPROTO_DCERPC;
+    if (DetectSignatureSetAppProto(s, ALPROTO_DCERPC) < 0) {
+        SigFree(s);
+        return 0;
+    }
 
     result &= (DetectBytetestSetup(NULL, s, "1,=,1,6,dce") == 0);
     result &= (DetectBytetestSetup(NULL, s, "1,=,1,6,string,dce") == -1);
@@ -1033,7 +1125,7 @@ static int DetectBytetestTestParse20(void)
         (bd->flags & DETECT_BYTETEST_STRING) &&
         (bd->flags & DETECT_BYTETEST_BIG) &&
         (bd->flags & DETECT_BYTETEST_LITTLE) &&
-        (bd->flags & DETECT_BYTETEST_NEGOP) ) {
+        (bd->neg_op) ) {
         result = 0;
         goto end;
     }
@@ -1060,7 +1152,7 @@ static int DetectBytetestTestParse20(void)
         (bd->flags & DETECT_BYTETEST_STRING) &&
         (bd->flags & DETECT_BYTETEST_BIG) &&
         (bd->flags & DETECT_BYTETEST_LITTLE) &&
-        (bd->flags & DETECT_BYTETEST_NEGOP) ) {
+        (bd->neg_op) ) {
         result = 0;
         goto end;
     }
@@ -1087,7 +1179,7 @@ static int DetectBytetestTestParse20(void)
         (bd->flags & DETECT_BYTETEST_STRING) &&
         (bd->flags & DETECT_BYTETEST_BIG) &&
         (bd->flags & DETECT_BYTETEST_LITTLE) &&
-        (bd->flags & DETECT_BYTETEST_NEGOP) ) {
+        (bd->neg_op) ) {
         result = 0;
         goto end;
     }
@@ -1260,7 +1352,7 @@ static int DetectBytetestTestParse22(void)
         (bd->flags & DETECT_BYTETEST_STRING) &&
         (bd->flags & DETECT_BYTETEST_BIG) &&
         (bd->flags & DETECT_BYTETEST_LITTLE) &&
-        (bd->flags & DETECT_BYTETEST_NEGOP) ) {
+        (bd->neg_op) ) {
         printf("wrong flags: ");
         goto end;
     }
@@ -1273,6 +1365,54 @@ static int DetectBytetestTestParse22(void)
 
     return result;
 }
+
+/**
+ * \test Test bitmask option.
+ */
+static int DetectBytetestTestParse23(void)
+{
+    DetectBytetestData *data;
+    data = DetectBytetestParse("4, <, 5, 0, bitmask 0xf8", NULL, NULL);
+
+    FAIL_IF_NULL(data);
+    FAIL_IF_NOT(data->op == DETECT_BYTETEST_OP_LT);
+    FAIL_IF_NOT(data->nbytes == 4);
+    FAIL_IF_NOT(data->value == 5);
+    FAIL_IF_NOT(data->offset == 0);
+    FAIL_IF_NOT(data->flags & DETECT_BYTETEST_BITMASK);
+    FAIL_IF_NOT(data->bitmask == 0xf8);
+    FAIL_IF_NOT(data->bitmask_shift_count == 3);
+
+    DetectBytetestFree(data);
+
+    PASS;
+}
+
+/**
+ * \test Test all options
+ */
+static int DetectBytetestTestParse24(void)
+{
+    DetectBytetestData *data;
+    data = DetectBytetestParse("4, !<, 5, 0, relative,string,hex, big, bitmask 0xf8", NULL, NULL);
+    FAIL_IF_NULL(data);
+    FAIL_IF_NOT(data->op == DETECT_BYTETEST_OP_LT);
+    FAIL_IF_NOT(data->nbytes == 4);
+    FAIL_IF_NOT(data->value == 5);
+    FAIL_IF_NOT(data->offset == 0);
+    FAIL_IF_NOT(data->base == DETECT_BYTETEST_BASE_HEX);
+    FAIL_IF_NOT(data->flags & DETECT_BYTETEST_BIG);
+    FAIL_IF_NOT(data->flags & DETECT_BYTETEST_RELATIVE);
+    FAIL_IF_NOT(data->flags & DETECT_BYTETEST_STRING);
+    FAIL_IF_NOT(data->flags & DETECT_BYTETEST_BITMASK);
+    FAIL_IF_NOT(data->bitmask == 0xf8);
+    FAIL_IF_NOT(data->bitmask_shift_count == 3);
+
+    DetectBytetestFree(data);
+
+    PASS;
+}
+
 
 /**
  * \test DetectByteTestTestPacket01 is a test to check matches of
@@ -1365,6 +1505,7 @@ static int DetectByteTestTestPacket03(void)
     UTHFreePacket(p);
 
 end:
+    SCFree(buf);
     return result;
 }
 
@@ -1427,6 +1568,104 @@ static int DetectByteTestTestPacket05(void)
 end:
     return result;
 }
+/** \test simple dns match on first byte */
+static int DetectByteTestTestPacket06(void)
+{
+    uint8_t buf[] = {   0x38, 0x35, 0x01, 0x00, 0x00, 0x01,
+                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x001, 0x00, 0x01, 0x00,};
+    Flow f;
+    Packet *p = NULL;
+    Signature *s = NULL;
+    ThreadVars tv;
+    DetectEngineThreadCtx *det_ctx = NULL;
+    AppLayerParserThreadCtx *alp_tctx = AppLayerParserThreadCtxAlloc();
+
+    FAIL_IF_NULL(alp_tctx);
+
+    memset(&tv, 0, sizeof(ThreadVars));
+    memset(&f, 0, sizeof(Flow));
+
+    p = UTHBuildPacketReal(buf, sizeof(buf), IPPROTO_UDP,
+                           "192.168.1.5", "192.168.1.1",
+                           41424, 53);
+
+    FLOW_INITIALIZE(&f);
+    f.flags |= FLOW_IPV4;
+    f.proto = IPPROTO_UDP;
+    f.protomap = FlowGetProtoMapping(f.proto);
+
+    p->flow = &f;
+    p->flags |= PKT_HAS_FLOW;
+    p->flowflags |= FLOW_PKT_TOSERVER;
+    f.alproto = ALPROTO_DNS;
+
+    DetectEngineCtx *de_ctx = DetectEngineCtxInit();
+    FAIL_IF_NULL(de_ctx);
+
+    de_ctx->mpm_matcher = mpm_default_matcher;
+    de_ctx->flags |= DE_QUIET;
+
+    /*
+     * Check first byte
+     * (0x38 & 0xF8) --> 0x38
+     * 0x38 >> 3 --> 0x7
+     * 0x7 = 0x07
+     */
+    /* this rule should alert */
+    s = DetectEngineAppendSig(de_ctx, "alert dns any any -> any any "
+                              "(msg:\"Byte test against first byte\"; "
+                              "byte_test:1,=,0x07,0,bitmask 0xF8;"
+                              "sid:1;)");
+    FAIL_IF_NULL(s);
+
+    /* this rule should not alert */
+    s = DetectEngineAppendSig(de_ctx, "alert dns any any -> any any "
+                              "(msg:\"Test dns_query option\"; "
+                              "byte_test:1,=,0x07,0,bitmask 0xFF;"
+                              "sid:2;)");
+    FAIL_IF_NULL(s);
+
+    /*
+     * Check 3rd byte
+     * (0x01 & 0xFF) --> 0x01
+     * 0x01 >> 0 --> 0x1
+     * 0x1 = 0x01
+     */
+    /* this rule should alert */
+    s = DetectEngineAppendSig(de_ctx, "alert dns any any -> any any "
+                              "(msg:\"Test dns_query option\"; "
+                              "byte_test:3,=,0x01,0,bitmask 0xFF;"
+                              "sid:3;)");
+    FAIL_IF_NULL(s);
+
+    SigGroupBuild(de_ctx);
+    DetectEngineThreadCtxInit(&tv, (void *)de_ctx, (void *)&det_ctx);
+    FAIL_IF_NULL(det_ctx);
+
+    FAIL_IF_NOT(0 == AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_DNS,
+                                        STREAM_TOSERVER, buf, sizeof(buf)));
+
+    FAIL_IF_NULL(f.alstate);
+
+    /* do detect */
+    SigMatchSignatures(&tv, de_ctx, det_ctx, p);
+
+    FAIL_IF_NOT(PacketAlertCheck(p, 1));
+
+    FAIL_IF(PacketAlertCheck(p, 2));
+
+    FAIL_IF_NOT(PacketAlertCheck(p, 3));
+
+    AppLayerParserThreadCtxFree(alp_tctx);
+    DetectEngineThreadCtxDeinit(&tv, det_ctx);
+    SigGroupCleanup(de_ctx);
+    DetectEngineCtxFree(de_ctx);
+
+    FLOW_DESTROY(&f);
+    UTHFreePacket(p);
+    PASS;
+}
 
 #endif /* UNITTESTS */
 
@@ -1462,12 +1701,15 @@ static void DetectBytetestRegisterTests(void)
     UtRegisterTest("DetectBytetestTestParse20", DetectBytetestTestParse20);
     UtRegisterTest("DetectBytetestTestParse21", DetectBytetestTestParse21);
     UtRegisterTest("DetectBytetestTestParse22", DetectBytetestTestParse22);
+    UtRegisterTest("DetectBytetestTestParse23", DetectBytetestTestParse23);
+    UtRegisterTest("DetectBytetestTestParse24", DetectBytetestTestParse24);
 
     UtRegisterTest("DetectByteTestTestPacket01", DetectByteTestTestPacket01);
     UtRegisterTest("DetectByteTestTestPacket02", DetectByteTestTestPacket02);
     UtRegisterTest("DetectByteTestTestPacket03", DetectByteTestTestPacket03);
     UtRegisterTest("DetectByteTestTestPacket04", DetectByteTestTestPacket04);
     UtRegisterTest("DetectByteTestTestPacket05", DetectByteTestTestPacket05);
+    UtRegisterTest("DetectByteTestTestPacket06", DetectByteTestTestPacket06);
 #endif /* UNITTESTS */
 }
 

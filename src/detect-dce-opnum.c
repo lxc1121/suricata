@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2018 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -49,12 +49,10 @@
 #include "stream-tcp.h"
 
 #include "rust.h"
-#include "rust-smb-detect-gen.h"
 
 #define PARSE_REGEX "^\\s*([0-9]{1,5}(\\s*-\\s*[0-9]{1,5}\\s*)?)(,\\s*[0-9]{1,5}(\\s*-\\s*[0-9]{1,5})?\\s*)*$"
 
-static pcre *parse_regex = NULL;
-static pcre_extra *parse_regex_study = NULL;
+static DetectParseRegex parse_regex;
 
 static int DetectDceOpnumMatchRust(DetectEngineThreadCtx *det_ctx,
         Flow *f, uint8_t flags, void *state, void *txv,
@@ -76,7 +74,7 @@ void DetectDceOpnumRegister(void)
     sigmatch_table[DETECT_DCE_OPNUM].Free  = DetectDceOpnumFree;
     sigmatch_table[DETECT_DCE_OPNUM].RegisterTests = DetectDceOpnumRegisterTests;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 
     g_dce_generic_list_id = DetectBufferTypeRegister("dce_generic");
 }
@@ -113,7 +111,6 @@ static DetectDceOpnumData *DetectDceOpnumArgParse(const char *arg)
     DetectDceOpnumRange *dor = NULL;
     DetectDceOpnumRange *prev_dor = NULL;
 
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
     const char *pcre_sub_str = NULL;
@@ -128,8 +125,7 @@ static DetectDceOpnumData *DetectDceOpnumArgParse(const char *arg)
         goto error;
     }
 
-    ret = pcre_exec(parse_regex, parse_regex_study, arg, strlen(arg), 0, 0, ov,
-                    MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, arg, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret < 2) {
         SCLogError(SC_ERR_PCRE_MATCH, "pcre_exec parse error, ret %" PRId32 ", string %s", ret, arg);
         goto error;
@@ -157,7 +153,7 @@ static DetectDceOpnumData *DetectDceOpnumArgParse(const char *arg)
      * once we are done using it */
     dup_str_head = dup_str;
     dup_str_temp = dup_str;
-    while ( (comma_token = index(dup_str, ',')) != NULL) {
+    while ( (comma_token = strchr(dup_str, ',')) != NULL) {
         comma_token[0] = '\0';
         dup_str = comma_token + 1;
 
@@ -172,7 +168,7 @@ static DetectDceOpnumData *DetectDceOpnumArgParse(const char *arg)
             prev_dor = dor;
         }
 
-        if ((hyphen_token = index(dup_str_temp, '-')) != NULL) {
+        if ((hyphen_token = strchr(dup_str_temp, '-')) != NULL) {
             hyphen_token[0] = '\0';
             hyphen_token++;
             dor->range1 = atoi(dup_str_temp);
@@ -200,7 +196,7 @@ static DetectDceOpnumData *DetectDceOpnumArgParse(const char *arg)
         prev_dor->next = dor;
     }
 
-    if ( (hyphen_token = index(dup_str, '-')) != NULL) {
+    if ( (hyphen_token = strchr(dup_str, '-')) != NULL) {
         hyphen_token[0] = '\0';
         hyphen_token++;
         dor->range1 = atoi(dup_str);

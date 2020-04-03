@@ -17,8 +17,10 @@
 
 use std::cmp::min;
 
-use dhcp::dhcp::*;
-use nom::*;
+use crate::dhcp::dhcp::*;
+use nom::IResult;
+use nom::combinator::rest;
+use nom::number::streaming::{be_u8, be_u16, be_u32};
 
 pub struct DHCPMessage {
     pub header: DHCPHeader,
@@ -121,7 +123,7 @@ named!(pub parse_header<DHCPHeader>,
 named!(pub parse_clientid_option<DHCPOption>,
        do_parse!(
            code:   be_u8 >>
-           len: verify!(be_u8, |v| v > 1) >>
+           len: verify!(be_u8, |&v| v > 1) >>
            _htype: be_u8 >>
            data:   take!(len - 1) >>
                (
@@ -233,8 +235,8 @@ pub fn dhcp_parse(input: &[u8]) -> IResult<&[u8], DHCPMessage> {
 
 #[cfg(test)]
 mod tests {
-    use dhcp::dhcp::*;
-    use dhcp::parser::*;
+    use crate::dhcp::dhcp::*;
+    use crate::dhcp::parser::*;
 
     #[test]
     fn test_parse_discover() {

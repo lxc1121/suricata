@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -40,8 +40,7 @@
 
 #define PARSE_REGEX "^\\s*(\"\\s*)?([0-9]+)(\\s*\")?\\s*$"
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 static int DetectIcmpIdMatch(DetectEngineThreadCtx *, Packet *,
         const Signature *, const SigMatchCtx *);
@@ -49,7 +48,7 @@ static int DetectIcmpIdSetup(DetectEngineCtx *, Signature *, const char *);
 void DetectIcmpIdRegisterTests(void);
 void DetectIcmpIdFree(void *);
 static int PrefilterSetupIcmpId(DetectEngineCtx *de_ctx, SigGroupHead *sgh);
-static _Bool PrefilterIcmpIdIsPrefilterable(const Signature *s);
+static bool PrefilterIcmpIdIsPrefilterable(const Signature *s);
 
 /**
  * \brief Registration function for icode: icmp_id
@@ -57,7 +56,7 @@ static _Bool PrefilterIcmpIdIsPrefilterable(const Signature *s);
 void DetectIcmpIdRegister (void)
 {
     sigmatch_table[DETECT_ICMP_ID].name = "icmp_id";
-    sigmatch_table[DETECT_ICMP_ID].desc = "check for a ICMP id";
+    sigmatch_table[DETECT_ICMP_ID].desc = "check for a ICMP ID";
     sigmatch_table[DETECT_ICMP_ID].url = DOC_URL DOC_VERSION "/rules/header-keywords.html#icmp-id";
     sigmatch_table[DETECT_ICMP_ID].Match = DetectIcmpIdMatch;
     sigmatch_table[DETECT_ICMP_ID].Setup = DetectIcmpIdSetup;
@@ -67,10 +66,10 @@ void DetectIcmpIdRegister (void)
     sigmatch_table[DETECT_ICMP_ID].SupportsPrefilter = PrefilterIcmpIdIsPrefilterable;
     sigmatch_table[DETECT_ICMP_ID].SetupPrefilter = PrefilterSetupIcmpId;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
-static inline _Bool GetIcmpId(Packet *p, uint16_t *id)
+static inline bool GetIcmpId(Packet *p, uint16_t *id)
 {
     if (PKT_IS_PSEUDOPKT(p))
         return FALSE;
@@ -157,11 +156,10 @@ static DetectIcmpIdData *DetectIcmpIdParse (const char *icmpidstr)
 {
     DetectIcmpIdData *iid = NULL;
     char *substr[3] = {NULL, NULL, NULL};
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
 
-    ret = pcre_exec(parse_regex, parse_regex_study, icmpidstr, strlen(icmpidstr), 0, 0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, icmpidstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret < 1 || ret > 4) {
         SCLogError(SC_ERR_PCRE_MATCH, "Parse error %s", icmpidstr);
         goto error;
@@ -195,9 +193,8 @@ static DetectIcmpIdData *DetectIcmpIdParse (const char *icmpidstr)
         }
     }
 
-    /** \todo can ByteExtractStringUint16 do this? */
     uint16_t id = 0;
-    if (ByteExtractStringUint16(&id, 10, 0, substr[1]) < 0) {
+    if (StringParseUint16(&id, 10, 0, substr[1]) < 0) {
         SCLogError(SC_ERR_INVALID_ARGUMENT, "specified icmp id %s is not "
                                         "valid", substr[1]);
         goto error;
@@ -290,7 +287,7 @@ PrefilterPacketIcmpIdSet(PrefilterPacketHeaderValue *v, void *smctx)
     v->u16[0] = a->id;
 }
 
-static _Bool
+static bool
 PrefilterPacketIcmpIdCompare(PrefilterPacketHeaderValue v, void *smctx)
 {
     const DetectIcmpIdData *a = smctx;
@@ -307,7 +304,7 @@ static int PrefilterSetupIcmpId(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
         PrefilterPacketIcmpIdMatch);
 }
 
-static _Bool PrefilterIcmpIdIsPrefilterable(const Signature *s)
+static bool PrefilterIcmpIdIsPrefilterable(const Signature *s)
 {
     const SigMatch *sm;
     for (sm = s->init_data->smlists[DETECT_SM_LIST_MATCH] ; sm != NULL; sm = sm->next) {
@@ -498,7 +495,7 @@ static int DetectIcmpIdMatchTest02 (void)
     ip4h.s_ip_dst.s_addr = p->dst.addr_data32[0];
     p->ip4h = &ip4h;
 
-    DecodeICMPV4(&th_v, &dtv, p, raw_icmpv4, sizeof(raw_icmpv4), NULL);
+    DecodeICMPV4(&th_v, &dtv, p, raw_icmpv4, sizeof(raw_icmpv4));
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     if (de_ctx == NULL) {

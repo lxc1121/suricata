@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -24,6 +24,8 @@
 #ifndef __DETECT_PCRE_H__
 #define __DETECT_PCRE_H__
 
+#include "detect-parse.h"
+
 #define DETECT_PCRE_RELATIVE            0x00001
 #define DETECT_PCRE_RAWBYTES            0x00002
 #define DETECT_PCRE_CASELESS            0x00004
@@ -36,8 +38,7 @@
 
 typedef struct DetectPcreData_ {
     /* pcre options */
-    pcre *re;
-    pcre_extra *sd;
+    DetectParseRegex parse_regex;
     int opts;
     uint16_t flags;
     uint8_t idx;
@@ -49,11 +50,8 @@ typedef struct DetectPcreData_ {
 
 int DetectPcrePayloadMatch(DetectEngineThreadCtx *,
         const Signature *, const SigMatchData *,
-        Packet *, Flow *, uint8_t *, uint32_t);
+        Packet *, Flow *, const uint8_t *, uint32_t);
 
-int DetectPcrePacketPayloadMatch(DetectEngineThreadCtx *, Packet *, Signature *, SigMatch *);
-int DetectPcrePayloadDoMatch(DetectEngineThreadCtx *, Signature *, SigMatch *,
-                             Packet *, uint8_t *, uint16_t);
 void DetectPcreRegister (void);
 
 #endif /* __DETECT_PCRE_H__ */

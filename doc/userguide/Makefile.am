@@ -8,6 +8,7 @@ EXTRA_DIST = \
 	configuration \
 	file-extraction \
 	index.rst \
+	upgrade.rst \
 	initscripts.rst \
 	install.rst \
 	licenses \
@@ -18,6 +19,7 @@ EXTRA_DIST = \
 	partials \
 	performance \
 	public-data-sets.rst \
+	quickstart.rst \
 	reputation \
 	rule-management \
 	rules \

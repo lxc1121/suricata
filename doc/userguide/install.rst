@@ -1,3 +1,5 @@
+.. _installation:
+
 Installation
 ============
 
@@ -16,8 +18,8 @@ Installing from the source distribution files gives the most control over the Su
 
 Basic steps::
 
-    tar xzvf suricata-4.1.2.tar.gz
-    cd suricata-4.1.0
+    tar xzvf suricata-5.0.0.tar.gz
+    cd suricata-5.0.0
     ./configure
     make
     make install
@@ -51,14 +53,10 @@ Common configure options
 
     Enables Lua support for detection and output.
 
-.. option:: --enable-geopip
+.. option:: --enable-geoip
 
     Enables GeoIP support for detection.
 
-.. option:: --disable-rust
-
-    Disables Rust support. Rust support is enabled by default if rustc/cargo
-    are available.
 
 Dependencies
 ^^^^^^^^^^^^

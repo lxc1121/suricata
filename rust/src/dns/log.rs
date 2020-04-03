@@ -19,8 +19,8 @@ use std;
 use std::string::String;
 use std::collections::HashMap;
 
-use json::*;
-use dns::dns::*;
+use crate::json::*;
+use crate::dns::dns::*;
 
 pub const LOG_QUERIES    : u64 = BIT_U64!(0);
 pub const LOG_ANSWER     : u64 = BIT_U64!(1);
@@ -340,7 +340,7 @@ pub fn dns_rrtype_string(rrtype: u16) -> String {
     }.to_string()
 }
 
-fn dns_rcode_string(flags: u16) -> String {
+pub fn dns_rcode_string(flags: u16) -> String {
     match flags & 0x000f {
         DNS_RCODE_NOERROR => "NOERROR",
         DNS_RCODE_FORMERR => "FORMERR",

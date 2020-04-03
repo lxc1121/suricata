@@ -25,6 +25,13 @@
 #include "util-misc.h"
 #include "util-hash-lookup3.h"
 
+/** defrag tracker hash table */
+DefragTrackerHashRow *defragtracker_hash;
+DefragConfig defrag_config;
+SC_ATOMIC_DECLARE(uint64_t,defrag_memuse);
+SC_ATOMIC_DECLARE(unsigned int,defragtracker_counter);
+SC_ATOMIC_DECLARE(unsigned int,defragtracker_prune_idx);
+
 static DefragTracker *DefragTrackerGetUsedDefragTracker(void);
 
 /** queue with spare tracker */
@@ -195,7 +202,7 @@ void DefragInitConfig(char quiet)
     }
     if ((ConfGet("defrag.hash-size", &conf_val)) == 1)
     {
-        if (ByteExtractStringUint32(&configval, 10, strlen(conf_val),
+        if (StringParseUint32(&configval, 10, strlen(conf_val),
                                     conf_val) > 0) {
             defrag_config.hash_size = configval;
         } else {
@@ -206,7 +213,7 @@ void DefragInitConfig(char quiet)
 
     if ((ConfGet("defrag.trackers", &conf_val)) == 1)
     {
-        if (ByteExtractStringUint32(&configval, 10, strlen(conf_val),
+        if (StringParseUint32(&configval, 10, strlen(conf_val),
                                     conf_val) > 0) {
             defrag_config.prealloc = configval;
         } else {

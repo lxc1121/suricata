@@ -15,13 +15,13 @@
  * 02110-1301, USA.
  */
 
-use log::*;
-use smb::smb::*;
-use smb::smb2::*;
-use smb::smb2_records::*;
-use smb::dcerpc::*;
-use smb::events::*;
-use smb::funcs::*;
+use crate::log::*;
+use crate::smb::smb::*;
+use crate::smb::smb2::*;
+use crate::smb::smb2_records::*;
+use crate::smb::dcerpc::*;
+use crate::smb::events::*;
+use crate::smb::funcs::*;
 
 #[derive(Debug)]
 pub struct SMBTransactionIoctl {
@@ -38,7 +38,7 @@ impl SMBTransactionIoctl {
 
 impl SMBState {
     pub fn new_ioctl_tx(&mut self, hdr: SMBCommonHdr, func: u32)
-        -> (&mut SMBTransaction)
+        -> &mut SMBTransaction
     {
         let mut tx = self.new_tx();
         tx.hdr = hdr;

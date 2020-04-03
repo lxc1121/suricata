@@ -50,6 +50,7 @@ enum {
     SMTP_DECODER_EVENT_MIME_LONG_HEADER_NAME,
     SMTP_DECODER_EVENT_MIME_LONG_HEADER_VALUE,
     SMTP_DECODER_EVENT_MIME_BOUNDARY_TOO_LONG,
+    SMTP_DECODER_EVENT_MIME_LONG_FILENAME,
 
     /* Invalid behavior or content */
     SMTP_DECODER_EVENT_DUPLICATE_FIELDS,
@@ -109,15 +110,17 @@ typedef struct SMTPState_ {
     SMTPTransaction *curr_tx;
     TAILQ_HEAD(, SMTPTransaction_) tx_list;  /**< transaction list */
     uint64_t tx_cnt;
+    uint64_t toserver_data_count;
+    uint64_t toserver_last_data_stamp;
 
     /* current input that is being parsed */
-    uint8_t *input;
+    const uint8_t *input;
     int32_t input_len;
     uint8_t direction;
 
     /* --parser details-- */
     /** current line extracted by the parser from the call to SMTPGetline() */
-    uint8_t *current_line;
+    const uint8_t *current_line;
     /** length of the line in current_line.  Doesn't include the delimiter */
     int32_t current_line_len;
     uint8_t current_line_delimiter_len;

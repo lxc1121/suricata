@@ -45,8 +45,15 @@
 
 static Host *HostGetUsedHost(void);
 
+/** host hash table */
+HostHashRow *host_hash;
 /** queue with spare hosts */
 static HostQueue host_spare_q;
+HostConfig host_config;
+
+SC_ATOMIC_DECLARE(uint64_t,host_memuse);
+SC_ATOMIC_DECLARE(uint32_t,host_counter);
+SC_ATOMIC_DECLARE(uint32_t,host_prune_idx);
 
 /** size of the host object. Maybe updated in HostInitConfig to include
  *  the storage APIs additions. */
@@ -204,7 +211,7 @@ void HostInitConfig(char quiet)
     }
     if ((ConfGetValue("host.hash-size", &conf_val)) == 1)
     {
-        if (ByteExtractStringUint32(&configval, 10, strlen(conf_val),
+        if (StringParseUint32(&configval, 10, strlen(conf_val),
                                     conf_val) > 0) {
             host_config.hash_size = configval;
         }
@@ -212,7 +219,7 @@ void HostInitConfig(char quiet)
 
     if ((ConfGetValue("host.prealloc", &conf_val)) == 1)
     {
-        if (ByteExtractStringUint32(&configval, 10, strlen(conf_val),
+        if (StringParseUint32(&configval, 10, strlen(conf_val),
                                     conf_val) > 0) {
             host_config.prealloc = configval;
         } else {

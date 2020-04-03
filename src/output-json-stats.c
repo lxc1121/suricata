@@ -50,10 +50,8 @@
 
 #define MODULE_NAME "JsonStatsLog"
 
-#ifdef HAVE_LIBJANSSON
-
 extern bool stats_decoder_events;
-const char *stats_decoder_events_prefix;
+extern const char *stats_decoder_events_prefix;
 
 /**
  * specify which engine info will be printed in stats log.
@@ -171,12 +169,12 @@ static json_t *OutputStats2Json(json_t *js, const char *key)
 {
     void *iter;
 
-    const char *dot = index(key, '.');
+    const char *dot = strchr(key, '.');
     if (dot == NULL)
         return NULL;
     if (strlen(dot) > 2) {
         if (*(dot + 1) == '.' && *(dot + 2) != '\0')
-            dot = index(dot + 2, '.');
+            dot = strchr(dot + 2, '.');
     }
 
     size_t predot_len = (dot - key) + 1;
@@ -184,7 +182,7 @@ static json_t *OutputStats2Json(json_t *js, const char *key)
     strlcpy(s, key, predot_len);
 
     iter = json_object_iter_at(js, s);
-    const char *s2 = index(dot+1, '.');
+    const char *s2 = strchr(dot+1, '.');
 
     json_t *value = json_object_iter_value(iter);
     if (value == NULL) {
@@ -232,8 +230,8 @@ json_t *StatsToJSON(const StatsTable *st, uint8_t flags)
                 continue;
             const char *name = st->stats[u].name;
             const char *shortname = name;
-            if (rindex(name, '.') != NULL) {
-                shortname = &name[rindex(name, '.') - name + 1];
+            if (strrchr(name, '.') != NULL) {
+                shortname = &name[strrchr(name, '.') - name + 1];
             }
             json_t *js_type = OutputStats2Json(js_stats, name);
             if (js_type != NULL) {
@@ -270,7 +268,7 @@ json_t *StatsToJSON(const StatsTable *st, uint8_t flags)
 
                 char str[256];
                 snprintf(str, sizeof(str), "%s.%s", st->tstats[u].tm_name, st->tstats[u].name);
-                char *shortname = &str[rindex(str, '.') - str + 1];
+                char *shortname = &str[strrchr(str, '.') - str + 1];
                 json_t *js_type = OutputStats2Json(threads, str);
 
                 if (js_type != NULL) {
@@ -383,6 +381,14 @@ static void OutputStatsLogDeinit(OutputCtx *output_ctx)
 static OutputInitResult OutputStatsLogInit(ConfNode *conf)
 {
     OutputInitResult result = { NULL, false };
+
+    if (!StatsEnabled()) {
+        SCLogError(SC_ERR_STATS_LOG_GENERIC,
+                "stats.json: stats are disabled globally: set stats.enabled to true. "
+                "See %s%s/configuration/suricata-yaml.html#stats", DOC_URL, DOC_VERSION);
+        return result;
+    }
+
     LogFileCtx *file_ctx = LogFileNewCtx();
     if(file_ctx == NULL) {
         SCLogError(SC_ERR_STATS_LOG_GENERIC, "couldn't create new file_ctx");
@@ -393,8 +399,7 @@ static OutputInitResult OutputStatsLogInit(ConfNode *conf)
             strcmp(stats_decoder_events_prefix, "decoder") == 0) {
         SCLogWarning(SC_WARN_EVE_MISSING_EVENTS, "json stats will not display "
                 "all decoder events correctly. See #2225. Set a prefix in "
-                "stats.decoder-events-prefix. In 5.0 the prefix will default "
-                "to 'decoder.event'.");
+                "stats.decoder-events-prefix.");
     }
 
     if (SCConfLogOpenGeneric(conf, file_ctx, DEFAULT_LOG_FILENAME, 1) < 0) {
@@ -455,6 +460,14 @@ static OutputInitResult OutputStatsLogInitSub(ConfNode *conf, OutputCtx *parent_
 {
     OutputInitResult result = { NULL, false };
     OutputJsonCtx *ajt = parent_ctx->data;
+
+    if (!StatsEnabled()) {
+        SCLogError(SC_ERR_STATS_LOG_GENERIC,
+                "eve.stats: stats are disabled globally: set stats.enabled to true. "
+                "See %s%s/configuration/suricata-yaml.html#stats", DOC_URL, DOC_VERSION);
+        return result;
+    }
+
     OutputStatsCtx *stats_ctx = SCMalloc(sizeof(OutputStatsCtx));
     if (unlikely(stats_ctx == NULL))
         return result;
@@ -463,8 +476,7 @@ static OutputInitResult OutputStatsLogInitSub(ConfNode *conf, OutputCtx *parent_
             strcmp(stats_decoder_events_prefix, "decoder") == 0) {
         SCLogWarning(SC_WARN_EVE_MISSING_EVENTS, "eve.stats will not display "
                 "all decoder events correctly. See #2225. Set a prefix in "
-                "stats.decoder-events-prefix. In 5.0 the prefix will default "
-                "to 'decoder.event'.");
+                "stats.decoder-events-prefix.");
     }
 
     stats_ctx->flags = JSON_STATS_TOTALS;
@@ -522,11 +534,3 @@ void JsonStatsLogRegister(void) {
         "eve-log.stats", OutputStatsLogInitSub, JsonStatsLogger,
         JsonStatsLogThreadInit, JsonStatsLogThreadDeinit, NULL);
 }
-
-#else
-
-void JsonStatsLogRegister (void)
-{
-}
-
-#endif

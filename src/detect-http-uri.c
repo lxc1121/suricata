@@ -102,7 +102,7 @@ void DetectHttpUriRegister (void)
     sigmatch_table[DETECT_HTTP_URI].name = "http.uri";
     sigmatch_table[DETECT_HTTP_URI].alias = "http.uri.normalized";
     sigmatch_table[DETECT_HTTP_URI].desc = "sticky buffer to match specifically and only on the normalized HTTP URI buffer";
-    sigmatch_table[DETECT_HTTP_URI].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#http-uri";
+    sigmatch_table[DETECT_HTTP_URI].url = DOC_URL DOC_VERSION "/rules/http-keywords.html#http-uri-and-http-raw-uri";
     sigmatch_table[DETECT_HTTP_URI].Setup = DetectHttpUriSetupSticky;
     sigmatch_table[DETECT_HTTP_URI].flags |= SIGMATCH_NOOPT|SIGMATCH_INFO_STICKY_BUFFER;
 
@@ -136,7 +136,7 @@ void DetectHttpUriRegister (void)
     /* http.uri.raw sticky buffer */
     sigmatch_table[DETECT_HTTP_URI_RAW].name = "http.uri.raw";
     sigmatch_table[DETECT_HTTP_URI_RAW].desc = "sticky buffer to match specifically and only on the raw HTTP URI buffer";
-    sigmatch_table[DETECT_HTTP_URI_RAW].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#http-uri";
+    sigmatch_table[DETECT_HTTP_URI_RAW].url = DOC_URL DOC_VERSION "/rules/http-keywords.html#http-uri-and-http-raw-uri";
     sigmatch_table[DETECT_HTTP_URI_RAW].Setup = DetectHttpRawUriSetupSticky;
     sigmatch_table[DETECT_HTTP_URI_RAW].flags |= SIGMATCH_NOOPT|SIGMATCH_INFO_STICKY_BUFFER;
 
@@ -202,8 +202,10 @@ static void DetectHttpUriSetupCallback(const DetectEngineCtx *de_ctx,
  */
 static int DetectHttpUriSetupSticky(DetectEngineCtx *de_ctx, Signature *s, const char *str)
 {
-    DetectBufferSetActiveList(s, g_http_uri_buffer_id);
-    s->alproto = ALPROTO_HTTP;
+    if (DetectBufferSetActiveList(s, g_http_uri_buffer_id) < 0)
+        return -1;
+    if (DetectSignatureSetAppProto(s, ALPROTO_HTTP) < 0)
+        return -1;
     return 0;
 }
 
@@ -274,8 +276,10 @@ static void DetectHttpRawUriSetupCallback(const DetectEngineCtx *de_ctx,
  */
 static int DetectHttpRawUriSetupSticky(DetectEngineCtx *de_ctx, Signature *s, const char *str)
 {
-    DetectBufferSetActiveList(s, g_http_raw_uri_buffer_id);
-    s->alproto = ALPROTO_HTTP;
+    if (DetectBufferSetActiveList(s, g_http_raw_uri_buffer_id) < 0)
+        return -1;
+    if (DetectSignatureSetAppProto(s, ALPROTO_HTTP) < 0)
+        return -1;
     return 0;
 }
 

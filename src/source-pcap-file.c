@@ -58,8 +58,7 @@ static TmEcode ReceivePcapFileThreadInit(ThreadVars *, const void *, void **);
 static void ReceivePcapFileThreadExitStats(ThreadVars *, void *);
 static TmEcode ReceivePcapFileThreadDeinit(ThreadVars *, void *);
 
-static TmEcode DecodePcapFile(ThreadVars *, Packet *, void *, PacketQueue *,
-                              PacketQueue *);
+static TmEcode DecodePcapFile(ThreadVars *, Packet *, void *);
 static TmEcode DecodePcapFileThreadInit(ThreadVars *, const void *, void **);
 static TmEcode DecodePcapFileThreadDeinit(ThreadVars *tv, void *data);
 
@@ -263,10 +262,9 @@ TmEcode ReceivePcapFileThreadInit(ThreadVars *tv, const void *initdata, void **d
             SCReturnInt(TM_ECODE_OK);
         }
 
+        pv->shared = &ptv->shared;
         status = InitPcapFile(pv);
         if(status == TM_ECODE_OK) {
-            pv->shared = &ptv->shared;
-
             ptv->is_directory = 0;
             ptv->behavior.file = pv;
         } else {
@@ -391,15 +389,12 @@ TmEcode ReceivePcapFileThreadDeinit(ThreadVars *tv, void *data)
 
 static double prev_signaled_ts = 0;
 
-TmEcode DecodePcapFile(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, PacketQueue *postpq)
+static TmEcode DecodePcapFile(ThreadVars *tv, Packet *p, void *data)
 {
     SCEnter();
     DecodeThreadVars *dtv = (DecodeThreadVars *)data;
 
-    /* XXX HACK: flow timeout can call us for injected pseudo packets
-     *           see bug: https://redmine.openinfosecfoundation.org/issues/1107 */
-    if (p->flags & PKT_PSEUDO_STREAM_END)
-        return TM_ECODE_OK;
+    BUG_ON(PKT_IS_PSEUDOPKT(p));
 
     /* update counters */
     DecodeUpdatePacketCounters(tv, dtv, p);
@@ -410,11 +405,11 @@ TmEcode DecodePcapFile(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, P
         FlowWakeupFlowManagerThread();
     }
 
-    Decoder decoder;
+    DecoderFunc decoder;
     if(ValidateLinkType(p->datalink, &decoder) == TM_ECODE_OK) {
 
         /* call the decoder */
-        decoder(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
+        decoder(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p));
 
 #ifdef DEBUG
         BUG_ON(p->pkt_src != PKT_SRC_WIRE && p->pkt_src != PKT_SRC_FFR);

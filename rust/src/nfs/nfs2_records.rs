@@ -1,4 +1,4 @@
-/* Copyright (C) 2017 Open Information Security Foundation
+/* Copyright (C) 2017-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -16,8 +16,9 @@
  */
 
 //! Nom parsers for NFSv2 records
-use nom::{be_u32, rest};
-use nfs::nfs_records::*;
+use nom::combinator::rest;
+use nom::number::streaming::be_u32;
+use crate::nfs::nfs_records::*;
 
 #[derive(Debug,PartialEq)]
 pub struct Nfs2Handle<'a> {

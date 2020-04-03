@@ -170,18 +170,11 @@ static TmEcode OutputFileLog(ThreadVars *tv, Packet *p, void *thread_data)
             (p->flowflags & FLOW_PKT_TOCLIENT));
     const bool file_trunc = StreamTcpReassembleDepthReached(p);
 
-    FileContainer *ffc_ts = AppLayerParserGetFiles(p->proto, f->alproto,
-                                                   f->alstate, STREAM_TOSERVER);
-    FileContainer *ffc_tc = AppLayerParserGetFiles(p->proto, f->alproto,
-                                                   f->alstate, STREAM_TOCLIENT);
+    FileContainer *ffc_ts = AppLayerParserGetFiles(f, STREAM_TOSERVER);
+    FileContainer *ffc_tc = AppLayerParserGetFiles(f, STREAM_TOCLIENT);
 
     OutputFileLogFfc(tv, op_thread_data, p, ffc_ts, file_close_ts, file_trunc, STREAM_TOSERVER);
     OutputFileLogFfc(tv, op_thread_data, p, ffc_tc, file_close_tc, file_trunc, STREAM_TOCLIENT);
-
-    if (ffc_ts && (p->flowflags & FLOW_PKT_TOSERVER))
-        FilePrune(ffc_ts);
-    if (ffc_tc && (p->flowflags & FLOW_PKT_TOCLIENT))
-        FilePrune(ffc_tc);
 
     return TM_ECODE_OK;
 }
@@ -268,10 +261,20 @@ static void OutputFileLogExitPrintStats(ThreadVars *tv, void *thread_data)
     }
 }
 
+static uint32_t OutputFileLoggerGetActiveCount(void)
+{
+    uint32_t cnt = 0;
+    for (OutputFileLogger *p = list; p != NULL; p = p->next) {
+        cnt++;
+    }
+    return cnt;
+}
+
 void OutputFileLoggerRegister(void)
 {
     OutputRegisterRootLogger(OutputFileLogThreadInit,
-        OutputFileLogThreadDeinit, OutputFileLogExitPrintStats, OutputFileLog);
+        OutputFileLogThreadDeinit, OutputFileLogExitPrintStats,
+        OutputFileLog, OutputFileLoggerGetActiveCount);
 }
 
 void OutputFileShutdown(void)

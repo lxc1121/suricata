@@ -90,15 +90,14 @@ typedef struct PcapThreadVars_
     LiveDevice *livedev;
 } PcapThreadVars;
 
-TmEcode ReceivePcapThreadInit(ThreadVars *, const void *, void **);
-void ReceivePcapThreadExitStats(ThreadVars *, void *);
-TmEcode ReceivePcapThreadDeinit(ThreadVars *, void *);
-TmEcode ReceivePcapLoop(ThreadVars *tv, void *data, void *slot);
-TmEcode ReceivePcapBreakLoop(ThreadVars *tv, void *data);
+static TmEcode ReceivePcapThreadInit(ThreadVars *, const void *, void **);
+static void ReceivePcapThreadExitStats(ThreadVars *, void *);
+static TmEcode ReceivePcapLoop(ThreadVars *tv, void *data, void *slot);
+static TmEcode ReceivePcapBreakLoop(ThreadVars *tv, void *data);
 
-TmEcode DecodePcapThreadInit(ThreadVars *, const void *, void **);
-TmEcode DecodePcapThreadDeinit(ThreadVars *tv, void *data);
-TmEcode DecodePcap(ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
+static TmEcode DecodePcapThreadInit(ThreadVars *, const void *, void **);
+static TmEcode DecodePcapThreadDeinit(ThreadVars *tv, void *data);
+static TmEcode DecodePcap(ThreadVars *, Packet *, void *);
 
 /** protect pcap_compile and pcap_setfilter, as they are not thread safe:
  *  http://seclists.org/tcpdump/2009/q1/62 */
@@ -240,7 +239,7 @@ static void PcapCallbackLoop(char *user, struct pcap_pkthdr *h, u_char *pkt)
 /**
  *  \brief Main PCAP reading Loop function
  */
-TmEcode ReceivePcapLoop(ThreadVars *tv, void *data, void *slot)
+static TmEcode ReceivePcapLoop(ThreadVars *tv, void *data, void *slot)
 {
     SCEnter();
 
@@ -266,7 +265,7 @@ TmEcode ReceivePcapLoop(ThreadVars *tv, void *data, void *slot)
             if (r == PCAP_ERROR_BREAK && ptv->cb_result == TM_ECODE_FAILED) {
                 SCReturnInt(TM_ECODE_FAILED);
             }
-            TmThreadsCaptureHandleTimeout(tv, ptv->slot, NULL);
+            TmThreadsCaptureHandleTimeout(tv, NULL);
         } else if (unlikely(r < 0)) {
             int dbreak = 0;
             SCLogError(SC_ERR_PCAP_DISPATCH, "error code %" PRId32 " %s",
@@ -298,7 +297,7 @@ TmEcode ReceivePcapLoop(ThreadVars *tv, void *data, void *slot)
 /**
  * \brief PCAP Break Loop function.
  */
-TmEcode ReceivePcapBreakLoop(ThreadVars *tv, void *data)
+static TmEcode ReceivePcapBreakLoop(ThreadVars *tv, void *data)
 {
     SCEnter();
     PcapThreadVars *ptv = (PcapThreadVars *)data;
@@ -324,7 +323,7 @@ TmEcode ReceivePcapBreakLoop(ThreadVars *tv, void *data)
  *
  * \todo Create a general pcap setup function.
  */
-TmEcode ReceivePcapThreadInit(ThreadVars *tv, const void *initdata, void **data)
+static TmEcode ReceivePcapThreadInit(ThreadVars *tv, const void *initdata, void **data)
 {
     SCEnter();
     PcapIfaceConfig *pcapconfig = (PcapIfaceConfig *)initdata;
@@ -500,7 +499,7 @@ TmEcode ReceivePcapThreadInit(ThreadVars *tv, const void *initdata, void **data)
  * \param tv pointer to ThreadVars
  * \param data pointer that gets cast into PcapThreadVars for ptv
  */
-void ReceivePcapThreadExitStats(ThreadVars *tv, void *data)
+static void ReceivePcapThreadExitStats(ThreadVars *tv, void *data)
 {
     SCEnter();
     PcapThreadVars *ptv = (PcapThreadVars *)data;
@@ -532,38 +531,21 @@ void ReceivePcapThreadExitStats(ThreadVars *tv, void *data)
 }
 
 /**
- * \brief DeInit function closes pcap_handle at exit.
- * \param tv pointer to ThreadVars
- * \param data pointer that gets cast into PcapThreadVars for ptv
- */
-TmEcode ReceivePcapThreadDeinit(ThreadVars *tv, void *data)
-{
-    PcapThreadVars *ptv = (PcapThreadVars *)data;
-
-    pcap_close(ptv->pcap_handle);
-    SCReturnInt(TM_ECODE_OK);
-}
-
-/**
  * \brief This function passes off to link type decoders.
  *
- * DecodePcap reads packets from the PacketQueue and passes
+ * DecodePcap decodes packets from libpcap and passes
  * them off to the proper link type decoder.
  *
  * \param t pointer to ThreadVars
  * \param p pointer to the current packet
  * \param data pointer that gets cast into PcapThreadVars for ptv
- * \param pq pointer to the current PacketQueue
  */
-TmEcode DecodePcap(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, PacketQueue *postpq)
+static TmEcode DecodePcap(ThreadVars *tv, Packet *p, void *data)
 {
     SCEnter();
     DecodeThreadVars *dtv = (DecodeThreadVars *)data;
 
-    /* XXX HACK: flow timeout can call us for injected pseudo packets
-     *           see bug: https://redmine.openinfosecfoundation.org/issues/1107 */
-    if (p->flags & PKT_PSEUDO_STREAM_END)
-        return TM_ECODE_OK;
+    BUG_ON(PKT_IS_PSEUDOPKT(p));
 
     /* update counters */
     DecodeUpdatePacketCounters(tv, dtv, p);
@@ -571,20 +553,20 @@ TmEcode DecodePcap(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, Packe
     /* call the decoder */
     switch(p->datalink) {
         case LINKTYPE_LINUX_SLL:
-            DecodeSll(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
+            DecodeSll(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p));
             break;
         case LINKTYPE_ETHERNET:
-            DecodeEthernet(tv, dtv, p,GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
+            DecodeEthernet(tv, dtv, p,GET_PKT_DATA(p), GET_PKT_LEN(p));
             break;
         case LINKTYPE_PPP:
-            DecodePPP(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
+            DecodePPP(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p));
             break;
         case LINKTYPE_RAW:
         case LINKTYPE_GRE_OVER_IP:
-            DecodeRaw(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
+            DecodeRaw(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p));
             break;
         case LINKTYPE_NULL:
-            DecodeNull(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
+            DecodeNull(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p));
             break;
         default:
             SCLogError(SC_ERR_DATALINK_UNIMPLEMENTED, "Error: datalink "
@@ -598,7 +580,7 @@ TmEcode DecodePcap(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, Packe
     SCReturnInt(TM_ECODE_OK);
 }
 
-TmEcode DecodePcapThreadInit(ThreadVars *tv, const void *initdata, void **data)
+static TmEcode DecodePcapThreadInit(ThreadVars *tv, const void *initdata, void **data)
 {
     SCEnter();
 
@@ -613,7 +595,7 @@ TmEcode DecodePcapThreadInit(ThreadVars *tv, const void *initdata, void **data)
     SCReturnInt(TM_ECODE_OK);
 }
 
-TmEcode DecodePcapThreadDeinit(ThreadVars *tv, void *data)
+static TmEcode DecodePcapThreadDeinit(ThreadVars *tv, void *data)
 {
     if (data != NULL)
         DecodeThreadVarsFree(tv, data);

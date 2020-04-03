@@ -45,6 +45,7 @@
 
 #include "detect-engine-payload.h"
 #include "detect-engine-dcepayload.h"
+#include "detect-dns-opcode.h"
 #include "detect-dns-query.h"
 #include "detect-tls-sni.h"
 #include "detect-tls-certs.h"
@@ -120,6 +121,8 @@
 #include "detect-filesha1.h"
 #include "detect-filesha256.h"
 #include "detect-filesize.h"
+#include "detect-dataset.h"
+#include "detect-datarep.h"
 #include "detect-dsize.h"
 #include "detect-flowvar.h"
 #include "detect-flowint.h"
@@ -170,12 +173,24 @@
 #include "detect-tcphdr.h"
 #include "detect-tcpmss.h"
 #include "detect-udphdr.h"
+#include "detect-icmpv6hdr.h"
+#include "detect-icmpv6-mtu.h"
 #include "detect-ipv4hdr.h"
 #include "detect-ipv6hdr.h"
 #include "detect-krb5-cname.h"
 #include "detect-krb5-errcode.h"
 #include "detect-krb5-msgtype.h"
 #include "detect-krb5-sname.h"
+#include "detect-sip-method.h"
+#include "detect-sip-uri.h"
+#include "detect-sip-protocol.h"
+#include "detect-sip-stat-code.h"
+#include "detect-sip-stat-msg.h"
+#include "detect-sip-request-line.h"
+#include "detect-sip-response-line.h"
+#include "detect-rfb-secresult.h"
+#include "detect-rfb-sectype.h"
+#include "detect-rfb-name.h"
 #include "detect-target.h"
 #include "detect-template-rust-buffer.h"
 #include "detect-snmp-version.h"
@@ -191,6 +206,7 @@
 #include "detect-transform-md5.h"
 #include "detect-transform-sha1.h"
 #include "detect-transform-sha256.h"
+#include "detect-transform-dotprefix.h"
 
 #include "util-rule-vars.h"
 
@@ -433,6 +449,7 @@ void SigTableSetup(void)
     DetectHttpStatCodeRegister();
 
     DetectDnsQueryRegister();
+    DetectDnsOpcodeRegister();
     DetectModbusRegister();
     DetectCipServiceRegister();
     DetectEnipCommandRegister();
@@ -475,6 +492,8 @@ void SigTableSetup(void)
     DetectIsdataatRegister();
     DetectIdRegister();
     DetectDsizeRegister();
+    DetectDatasetRegister();
+    DetectDatarepRegister();
     DetectFlowvarRegister();
     DetectFlowintRegister();
     DetectPktvarRegister();
@@ -531,12 +550,24 @@ void SigTableSetup(void)
     DetectTcphdrRegister();
     DetectUdphdrRegister();
     DetectTcpmssRegister();
+    DetectICMPv6hdrRegister();
+    DetectICMPv6mtuRegister();
     DetectIpv4hdrRegister();
     DetectIpv6hdrRegister();
     DetectKrb5CNameRegister();
     DetectKrb5ErrCodeRegister();
     DetectKrb5MsgTypeRegister();
     DetectKrb5SNameRegister();
+    DetectSipMethodRegister();
+    DetectSipUriRegister();
+    DetectSipProtocolRegister();
+    DetectSipStatCodeRegister();
+    DetectSipStatMsgRegister();
+    DetectSipRequestLineRegister();
+    DetectSipResponseLineRegister();
+    DetectRfbSecresultRegister();
+    DetectRfbSectypeRegister();
+    DetectRfbNameRegister();
     DetectTargetRegister();
     DetectTemplateRustBufferRegister();
     DetectSNMPVersionRegister();
@@ -550,6 +581,7 @@ void SigTableSetup(void)
     DetectTransformMd5Register();
     DetectTransformSha1Register();
     DetectTransformSha256Register();
+    DetectTransformDotPrefixRegister();
 
     /* close keyword registration */
     DetectBufferTypeCloseRegistration();

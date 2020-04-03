@@ -51,6 +51,10 @@
 #define HTP_CONFIG_DEFAULT_FIELD_LIMIT_SOFT             9000U
 #define HTP_CONFIG_DEFAULT_FIELD_LIMIT_HARD             18000U
 
+/* default libhtp lzma limit, taken from libhtp. */
+#define HTP_CONFIG_DEFAULT_LZMA_MEMLIMIT                1048576U
+#define HTP_CONFIG_DEFAULT_COMPRESSION_BOMB_LIMIT       1048576U
+
 #define HTP_CONFIG_DEFAULT_RANDOMIZE                    1
 #define HTP_CONFIG_DEFAULT_RANDOMIZE_RANGE              10
 
@@ -86,6 +90,8 @@ enum {
     HTTP_DECODER_EVENT_INVALID_TRANSFER_ENCODING_VALUE_IN_RESPONSE,
     HTTP_DECODER_EVENT_INVALID_CONTENT_LENGTH_FIELD_IN_REQUEST,
     HTTP_DECODER_EVENT_INVALID_CONTENT_LENGTH_FIELD_IN_RESPONSE,
+    HTTP_DECODER_EVENT_DUPLICATE_CONTENT_LENGTH_FIELD_IN_REQUEST,
+    HTTP_DECODER_EVENT_DUPLICATE_CONTENT_LENGTH_FIELD_IN_RESPONSE,
     HTTP_DECODER_EVENT_100_CONTINUE_ALREADY_SEEN,
     HTTP_DECODER_EVENT_UNABLE_TO_MATCH_RESPONSE_TO_REQUEST,
     HTTP_DECODER_EVENT_INVALID_SERVER_PORT_IN_REQUEST,
@@ -118,6 +124,9 @@ enum {
     HTTP_DECODER_EVENT_DOUBLE_ENCODED_URI,
     HTTP_DECODER_EVENT_REQUEST_LINE_INVALID,
     HTTP_DECODER_EVENT_REQUEST_BODY_UNEXPECTED,
+
+    HTTP_DECODER_EVENT_LZMA_MEMLIMIT_REACHED,
+    HTTP_DECODER_EVENT_COMPRESSION_BOMB,
 
     /* suricata errors/warnings */
     HTTP_DECODER_EVENT_MULTIPART_GENERIC_ERROR,
@@ -183,11 +192,12 @@ typedef struct HtpBody_ {
     uint64_t body_inspected;
 } HtpBody;
 
-#define HTP_CONTENTTYPE_SET     0x01    /**< We have the content type */
-#define HTP_BOUNDARY_SET        0x02    /**< We have a boundary string */
-#define HTP_BOUNDARY_OPEN       0x04    /**< We have a boundary string */
-#define HTP_FILENAME_SET        0x08   /**< filename is registered in the flow */
-#define HTP_DONTSTORE           0x10    /**< not storing this file */
+#define HTP_CONTENTTYPE_SET     BIT_U8(0)    /**< We have the content type */
+#define HTP_BOUNDARY_SET        BIT_U8(1)    /**< We have a boundary string */
+#define HTP_BOUNDARY_OPEN       BIT_U8(2)    /**< We have a boundary string */
+#define HTP_FILENAME_SET        BIT_U8(3)    /**< filename is registered in the flow */
+#define HTP_DONTSTORE           BIT_U8(4)    /**< not storing this file */
+#define HTP_STREAM_DEPTH_SET    BIT_U8(5)    /**< stream-depth is set */
 
 /** Now the Body Chunks will be stored per transaction, at
   * the tx user data */
@@ -261,7 +271,7 @@ typedef struct HtpState_ {
 /** part of the engine needs the request body (e.g. file_data keyword) */
 #define HTP_REQUIRE_RESPONSE_BODY       (1 << 3)
 
-SC_ATOMIC_DECLARE(uint32_t, htp_config_flags);
+SC_ATOMIC_EXTERN(uint32_t, htp_config_flags);
 
 void RegisterHTPParsers(void);
 void HTPParserRegisterTests(void);

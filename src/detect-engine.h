@@ -52,7 +52,7 @@ const char *DetectBufferTypeGetDescriptionByName(const char *name);
 void DetectBufferTypeRegisterSetupCallback(const char *name,
         void (*Callback)(const DetectEngineCtx *, Signature *));
 void DetectBufferTypeRegisterValidateCallback(const char *name,
-        _Bool (*ValidateCallback)(const Signature *, const char **sigerror));
+        bool (*ValidateCallback)(const Signature *, const char **sigerror));
 
 int DetectBufferTypeGetByIdTransforms(DetectEngineCtx *de_ctx, const int id,
         int *transforms, int transform_cnt);
@@ -164,7 +164,7 @@ void DetectEngineSetParseMetadata(void);
 void DetectEngineUnsetParseMetadata(void);
 int DetectEngineMustParseMetadata(void);
 
-int DetectBufferSetActiveList(Signature *s, const int list);
+int WARN_UNUSED DetectBufferSetActiveList(Signature *s, const int list);
 int DetectBufferGetActiveList(DetectEngineCtx *de_ctx, Signature *s);
 
 #endif /* __DETECT_ENGINE_H__ */

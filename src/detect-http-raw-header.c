@@ -57,7 +57,7 @@ static int DetectHttpRawHeaderSetupSticky(DetectEngineCtx *de_ctx, Signature *s,
 #ifdef UNITTESTS
 static void DetectHttpRawHeaderRegisterTests(void);
 #endif
-static _Bool DetectHttpRawHeaderValidateCallback(const Signature *s, const char **sigerror);
+static bool DetectHttpRawHeaderValidateCallback(const Signature *s, const char **sigerror);
 static int g_http_raw_header_buffer_id = 0;
 static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
         const DetectEngineTransforms *transforms, Flow *_f,
@@ -78,6 +78,7 @@ void DetectHttpRawHeaderRegister(void)
     /* http_raw_header content modifier */
     sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].name = "http_raw_header";
     sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].desc = "content modifier to match the raw HTTP header buffer";
+    sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].url = DOC_URL DOC_VERSION "/rules/http-keywords.html#http-header-and-http-raw-header";
     sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].Setup = DetectHttpRawHeaderSetup;
 #ifdef UNITTESTS
     sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].RegisterTests = DetectHttpRawHeaderRegisterTests;
@@ -88,7 +89,7 @@ void DetectHttpRawHeaderRegister(void)
     /* http.header.raw sticky buffer */
     sigmatch_table[DETECT_HTTP_RAW_HEADER].name = "http.header.raw";
     sigmatch_table[DETECT_HTTP_RAW_HEADER].desc = "sticky buffer to match the raw HTTP header buffer";
-    sigmatch_table[DETECT_HTTP_RAW_HEADER].url = DOC_URL DOC_VERSION "/rules/http-keywords.html#http-raw-header";
+    sigmatch_table[DETECT_HTTP_RAW_HEADER].url = DOC_URL DOC_VERSION "/rules/http-keywords.html#http-header-and-http-raw-header";
     sigmatch_table[DETECT_HTTP_RAW_HEADER].Setup = DetectHttpRawHeaderSetupSticky;
     sigmatch_table[DETECT_HTTP_RAW_HEADER].flags |= SIGMATCH_NOOPT|SIGMATCH_INFO_STICKY_BUFFER;
 
@@ -154,7 +155,7 @@ static int DetectHttpRawHeaderSetupSticky(DetectEngineCtx *de_ctx, Signature *s,
     return 0;
 }
 
-static _Bool DetectHttpRawHeaderValidateCallback(const Signature *s, const char **sigerror)
+static bool DetectHttpRawHeaderValidateCallback(const Signature *s, const char **sigerror)
 {
     if ((s->flags & (SIG_FLAG_TOCLIENT|SIG_FLAG_TOSERVER)) == (SIG_FLAG_TOCLIENT|SIG_FLAG_TOSERVER)) {
         *sigerror = "http_raw_header signature "

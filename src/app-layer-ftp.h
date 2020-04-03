@@ -89,8 +89,7 @@ typedef enum {
 
 typedef struct FtpCommand_ {
     FtpRequestCommand command;
-    const char *command_name_upper;
-    const char *command_name_lower;
+    const char *command_name;
     const uint8_t command_length;
 } FtpCommand;
 extern const FtpCommand FtpCommands[FTP_COMMAND_MAX + 1];
@@ -163,7 +162,7 @@ typedef struct FTPTransaction_  {
 
 /** FTP State for app layer parser */
 typedef struct FtpState_ {
-    uint8_t *input;
+    const uint8_t *input;
     int32_t input_len;
     uint8_t direction;
     bool active;
@@ -174,7 +173,7 @@ typedef struct FtpState_ {
 
     /* --parser details-- */
     /** current line extracted by the parser from the call to FTPGetline() */
-    uint8_t *current_line;
+    const uint8_t *current_line;
     /** length of the line in current_line.  Doesn't include the delimiter */
     uint32_t current_line_len;
     uint8_t current_line_delimiter_len;
@@ -210,17 +209,19 @@ typedef struct FtpDataState_ {
     FtpRequestCommand command;
     uint8_t state;
     uint8_t direction;
+    uint64_t detect_flags_ts;
+    uint64_t detect_flags_tc;
 } FtpDataState;
 
 void RegisterFTPParsers(void);
 void FTPParserRegisterTests(void);
 void FTPAtExitPrintStats(void);
+void FTPParserCleanup(void);
 uint64_t FTPMemuseGlobalCounter(void);
 uint64_t FTPMemcapGlobalCounter(void);
 
-#ifdef HAVE_LIBJANSSON
+uint16_t JsonGetNextLineFromBuffer(const char *buffer, const uint16_t len);
 json_t *JsonFTPDataAddMetadata(const Flow *f);
-#endif
 
 #endif /* __APP_LAYER_FTP_H__ */
 

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2018 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -39,8 +39,7 @@
  */
 #define PARSE_REGEX  "^\\s*([0-9]*)?\\s*([<>=-]+)?\\s*([0-9]+)?\\s*$"
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 /* prototypes */
 static int DetectTtlMatch (DetectEngineThreadCtx *, Packet *,
@@ -51,7 +50,7 @@ void DetectTtlFree (void *);
 void DetectTtlRegisterTests (void);
 #endif
 static int PrefilterSetupTtl(DetectEngineCtx *de_ctx, SigGroupHead *sgh);
-static _Bool PrefilterTtlIsPrefilterable(const Signature *s);
+static bool PrefilterTtlIsPrefilterable(const Signature *s);
 
 /**
  * \brief Registration function for ttl: keyword
@@ -71,7 +70,7 @@ void DetectTtlRegister(void)
     sigmatch_table[DETECT_TTL].SupportsPrefilter = PrefilterTtlIsPrefilterable;
     sigmatch_table[DETECT_TTL].SetupPrefilter = PrefilterSetupTtl;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
     return;
 }
 
@@ -133,13 +132,12 @@ static int DetectTtlMatch (DetectEngineThreadCtx *det_ctx, Packet *p,
 
 static DetectTtlData *DetectTtlParse (const char *ttlstr)
 {
-#define MAX_SUBSTRINGS 30
     int ov[MAX_SUBSTRINGS];
     char arg1[6] = "";
     char arg2[6] = "";
     char arg3[6] = "";
 
-    int ret = pcre_exec(parse_regex, parse_regex_study, ttlstr, strlen(ttlstr), 0, 0, ov, MAX_SUBSTRINGS);
+    int ret = DetectParsePcreExec(&parse_regex, ttlstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret < 2 || ret > 4) {
         SCLogError(SC_ERR_PCRE_MATCH, "parse error, ret %" PRId32 "", ret);
         return NULL;
@@ -331,7 +329,7 @@ PrefilterPacketTtlSet(PrefilterPacketHeaderValue *v, void *smctx)
     v->u8[2] = a->ttl2;
 }
 
-static _Bool
+static bool
 PrefilterPacketTtlCompare(PrefilterPacketHeaderValue v, void *smctx)
 {
     const DetectTtlData *a = smctx;
@@ -350,7 +348,7 @@ static int PrefilterSetupTtl(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
             PrefilterPacketTtlMatch);
 }
 
-static _Bool PrefilterTtlIsPrefilterable(const Signature *s)
+static bool PrefilterTtlIsPrefilterable(const Signature *s)
 {
     const SigMatch *sm;
     for (sm = s->init_data->smlists[DETECT_SM_LIST_MATCH] ; sm != NULL; sm = sm->next) {

@@ -39,7 +39,6 @@
 #include "util-debug.h"
 
 #include "output.h"
-#include "app-layer-dns-common.h"
 #include "app-layer.h"
 #include "app-layer-parser.h"
 #include "util-privs.h"
@@ -47,6 +46,7 @@
 #include "util-proto-name.h"
 #include "util-logopenfile.h"
 #include "util-time.h"
+#include "rust.h"
 
 #ifdef HAVE_LUA
 
@@ -57,9 +57,6 @@
 #include "util-lua.h"
 #include "util-lua-common.h"
 #include "util-lua-dns.h"
-
-#include "rust-dns-dns-gen.h"
-#include "rust-dns-lua-gen.h"
 
 static int DnsGetDnsRrname(lua_State *luastate)
 {
@@ -88,20 +85,11 @@ static int DnsGetRcode(lua_State *luastate)
 {
     if (!(LuaStateNeedProto(luastate, ALPROTO_DNS)))
         return LuaCallbackError(luastate, "error: protocol not dns");
-    uint16_t rcode = 0;
     RSDNSTransaction *tx = LuaStateGetTX(luastate);
     if (tx == NULL) {
         return LuaCallbackError(luastate, "internal error: no tx");
     }
-    uint16_t flags = rs_dns_tx_get_response_flags(tx);
-    rcode = flags & 0x000f;
-    if (rcode) {
-        char rcode_str[16] = "";
-        DNSCreateRcodeString(rcode, rcode_str, sizeof(rcode_str));
-        return LuaPushStringBuffer(luastate, (const uint8_t *)rcode_str, strlen(rcode_str));
-    } else {
-        return 0;
-    }
+    return rs_dns_lua_get_rcode(luastate, tx);
 }
 
 static int DnsGetRecursionDesired(lua_State *luastate)

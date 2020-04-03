@@ -43,8 +43,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#include <jansson.h>
-
 #include "output.h"
 #include "output-json.h"
 
@@ -58,6 +56,9 @@
 #define SOCKET_PATH LOCAL_STATE_DIR "/run/suricata/"
 #define SOCKET_FILENAME "suricata-command.socket"
 #define SOCKET_TARGET SOCKET_PATH SOCKET_FILENAME
+
+SCCtrlCondT unix_manager_ctrl_cond;
+SCCtrlMutex unix_manager_ctrl_mutex;
 
 #define MAX_FAILED_RULES   20
 
@@ -696,15 +697,7 @@ static TmEcode UnixManagerVersionCommand(json_t *cmd,
                                    json_t *server_msg, void *data)
 {
     SCEnter();
-    json_object_set_new(server_msg, "message", json_string(
-#ifdef REVISION
-                        PROG_VER " (rev "  xstr(REVISION) ")"
-#elif defined RELEASE
-                        PROG_VER " RELEASE"
-#else
-                        PROG_VER
-#endif
-                        ));
+    json_object_set_new(server_msg, "message", json_string(GetProgramVersion()));
     SCReturnInt(TM_ECODE_OK);
 }
 
@@ -1088,6 +1081,8 @@ int UnixManagerInit(void)
     UnixManagerRegisterCommand("memcap-set", UnixSocketSetMemcap, &command, UNIX_CMD_TAKE_ARGS);
     UnixManagerRegisterCommand("memcap-show", UnixSocketShowMemcap, &command, UNIX_CMD_TAKE_ARGS);
     UnixManagerRegisterCommand("memcap-list", UnixSocketShowAllMemcap, NULL, 0);
+
+    UnixManagerRegisterCommand("dataset-add", UnixSocketDatasetAdd, &command, UNIX_CMD_TAKE_ARGS);
 
     return 0;
 }

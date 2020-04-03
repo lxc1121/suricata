@@ -3415,7 +3415,7 @@ static int SigTest36ContentAndIsdataatKeywords01 (void)
     memset(&th_v, 0, sizeof(th_v));
 
     FlowInitConfig(FLOW_QUIET);
-    DecodeEthernet(&th_v, &dtv, p, raw_eth, sizeof(raw_eth), NULL);
+    DecodeEthernet(&th_v, &dtv, p, raw_eth, sizeof(raw_eth));
 
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
@@ -3534,7 +3534,7 @@ static int SigTest37ContentAndIsdataatKeywords02 (void)
     memset(&th_v, 0, sizeof(th_v));
 
     FlowInitConfig(FLOW_QUIET);
-    DecodeEthernet(&th_v, &dtv, p, raw_eth, sizeof(raw_eth), NULL);
+    DecodeEthernet(&th_v, &dtv, p, raw_eth, sizeof(raw_eth));
 
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
@@ -3661,7 +3661,7 @@ static int SigTest40NoPacketInspection01(void)
     DetectEngineThreadCtxInit(&th_v, (void *)de_ctx,(void *)&det_ctx);
     det_ctx->de_ctx = de_ctx;
 
-    Detect(&th_v, p, det_ctx, &pq, NULL);
+    Detect(&th_v, p, det_ctx);
     if (PacketAlertCheck(p, 2))
         result = 0;
     else
@@ -4280,7 +4280,7 @@ static int SigTestWithin01 (void)
     if (unlikely(p1 == NULL))
         return 0;
     memset(p1, 0, SIZE_OF_PACKET);
-    DecodeEthernet(&th_v, &dtv, p1, rawpkt1, sizeof(rawpkt1), NULL);
+    DecodeEthernet(&th_v, &dtv, p1, rawpkt1, sizeof(rawpkt1));
     SigMatchSignatures(&th_v, de_ctx, det_ctx, p1);
     if (!(PacketAlertCheck(p1, 556))) {
         printf("failed to match on packet 1: ");
@@ -4292,7 +4292,7 @@ static int SigTestWithin01 (void)
     if (unlikely(p2 == NULL))
         return 0;
     memset(p2, 0, SIZE_OF_PACKET);
-    DecodeEthernet(&th_v, &dtv, p2, rawpkt2, sizeof(rawpkt2), NULL);
+    DecodeEthernet(&th_v, &dtv, p2, rawpkt2, sizeof(rawpkt2));
     SigMatchSignatures(&th_v, de_ctx, det_ctx, p2);
     if (!(PacketAlertCheck(p2, 556))) {
         printf("failed to match on packet 2: ");
@@ -4304,7 +4304,7 @@ static int SigTestWithin01 (void)
     if (unlikely(p3 == NULL))
         return 0;
     memset(p3, 0, SIZE_OF_PACKET);
-    DecodeEthernet(&th_v, &dtv, p3, rawpkt3, sizeof(rawpkt3), NULL);
+    DecodeEthernet(&th_v, &dtv, p3, rawpkt3, sizeof(rawpkt3));
     SigMatchSignatures(&th_v, de_ctx, det_ctx, p3);
     if (!(PacketAlertCheck(p3, 556))) {
         printf("failed to match on packet 3: ");
@@ -4316,7 +4316,7 @@ static int SigTestWithin01 (void)
     if (unlikely(p4 == NULL))
         return 0;
     memset(p4, 0, SIZE_OF_PACKET);
-    DecodeEthernet(&th_v, &dtv, p4, rawpkt4, sizeof(rawpkt4), NULL);
+    DecodeEthernet(&th_v, &dtv, p4, rawpkt4, sizeof(rawpkt4));
     SigMatchSignatures(&th_v, de_ctx, det_ctx, p4);
     if (!(PacketAlertCheck(p4, 556))) {
         printf("failed to match on packet 4: ");
@@ -4432,20 +4432,20 @@ static int SigTestDetectAlertCounter(void)
     StatsSetupPrivate(&tv);
 
     p = UTHBuildPacket((uint8_t *)"boo", strlen("boo"), IPPROTO_TCP);
-    Detect(&tv, p, det_ctx, NULL, NULL);
+    Detect(&tv, p, det_ctx);
     FAIL_IF_NOT(StatsGetLocalCounterValue(&tv, det_ctx->counter_alerts) == 1);
 
-    Detect(&tv, p, det_ctx, NULL, NULL);
+    Detect(&tv, p, det_ctx);
     FAIL_IF_NOT(StatsGetLocalCounterValue(&tv, det_ctx->counter_alerts) == 2);
     UTHFreePackets(&p, 1);
 
     p = UTHBuildPacket((uint8_t *)"roo", strlen("roo"), IPPROTO_TCP);
-    Detect(&tv, p, det_ctx, NULL, NULL);
+    Detect(&tv, p, det_ctx);
     FAIL_IF_NOT(StatsGetLocalCounterValue(&tv, det_ctx->counter_alerts) == 2);
     UTHFreePackets(&p, 1);
 
     p = UTHBuildPacket((uint8_t *)"laboosa", strlen("laboosa"), IPPROTO_TCP);
-    Detect(&tv, p, det_ctx, NULL, NULL);
+    Detect(&tv, p, det_ctx);
     FAIL_IF_NOT(StatsGetLocalCounterValue(&tv, det_ctx->counter_alerts) == 3);
     UTHFreePackets(&p, 1);
 

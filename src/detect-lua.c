@@ -75,6 +75,8 @@ void DetectLuaRegister(void)
 {
     sigmatch_table[DETECT_LUA].name = "lua";
     sigmatch_table[DETECT_LUA].alias = "luajit";
+    sigmatch_table[DETECT_LUA].desc = "support for lua scripting";
+    sigmatch_table[DETECT_LUA].url = DOC_URL DOC_VERSION "/rules/rule-lua-scripting.html";
     sigmatch_table[DETECT_LUA].Setup = DetectLuaSetupNoSupport;
     sigmatch_table[DETECT_LUA].Free  = NULL;
     sigmatch_table[DETECT_LUA].RegisterTests = NULL;
@@ -215,7 +217,7 @@ void LuaDumpStack(lua_State *state)
 
 int DetectLuaMatchBuffer(DetectEngineThreadCtx *det_ctx,
         const Signature *s, const SigMatchData *smd,
-        uint8_t *buffer, uint32_t buffer_len, uint32_t offset,
+        const uint8_t *buffer, uint32_t buffer_len, uint32_t offset,
         Flow *f)
 {
     SCEnter();

@@ -28,9 +28,16 @@
 #include "flow-private.h"
 #include "util-ebpf.h"
 
-#ifndef OS_WIN32
+#ifdef CAPTURE_OFFLOAD_MANAGER
 
 #define FLOW_BYPASS_DELAY       10
+
+#ifndef TIMEVAL_TO_TIMESPEC
+#define TIMEVAL_TO_TIMESPEC(tv, ts) {                               \
+    (ts)->tv_sec = (tv)->tv_sec;                                    \
+    (ts)->tv_nsec = (tv)->tv_usec * 1000;                           \
+}
+#endif
 
 typedef struct BypassedFlowManagerThreadData_ {
     uint16_t flow_bypassed_cnt_clo;
@@ -175,10 +182,7 @@ int BypassedFlowManagerRegisterUpdateFunc(BypassedUpdateFunc UpdateFunc,
 /** \brief spawn the flow bypass manager thread */
 void BypassedFlowManagerThreadSpawn()
 {
-#ifndef OS_WIN32
-#ifdef AFLFUZZ_DISABLE_MGTTHREADS
-    return;
-#endif
+#ifdef CAPTURE_OFFLOAD_MANAGER
 
     ThreadVars *tv_flowmgr = NULL;
     tv_flowmgr = TmThreadCreateMgmtThreadByName(thread_name_flow_bypass,
@@ -198,7 +202,7 @@ void BypassedFlowManagerThreadSpawn()
 
 void BypassedFlowUpdate(Flow *f, Packet *p)
 {
-#ifndef OS_WIN32
+#ifdef CAPTURE_OFFLOAD_MANAGER
     for (int i = 0; i < g_bypassed_update_max_index; i++) {
         if (updatefunclist[i].Func(f, p, updatefunclist[i].data)) {
             return;
@@ -209,7 +213,7 @@ void BypassedFlowUpdate(Flow *f, Packet *p)
 
 void TmModuleBypassedFlowManagerRegister (void)
 {
-#ifndef OS_WIN32
+#ifdef CAPTURE_OFFLOAD_MANAGER
     tmm_modules[TMM_BYPASSEDFLOWMANAGER].name = "BypassedFlowManager";
     tmm_modules[TMM_BYPASSEDFLOWMANAGER].ThreadInit = BypassedFlowManagerThreadInit;
     tmm_modules[TMM_BYPASSEDFLOWMANAGER].ThreadDeinit = BypassedFlowManagerThreadDeinit;

@@ -35,8 +35,7 @@
 #include "app-layer-parser.h"
 
 #include "app-layer-tftp.h"
-
-#include "rust-tftp-tftp-gen.h"
+#include "rust.h"
 
 /* The default port to probe if not provided in the configuration file. */
 #define TFTP_DEFAULT_PORT "69"
@@ -84,7 +83,7 @@ static AppLayerDecoderEvents *TFTPGetEvents(void *tx)
  *     ALPROTO_UNKNOWN.
  */
 static AppProto TFTPProbingParser(Flow *f, uint8_t direction,
-        uint8_t *input, uint32_t input_len, uint8_t *rdir)
+        const uint8_t *input, uint32_t input_len, uint8_t *rdir)
 {
     /* Very simple test - if there is input, this is tftp.
      * Also check if it's starting by a zero */
@@ -97,8 +96,8 @@ static AppProto TFTPProbingParser(Flow *f, uint8_t direction,
     return ALPROTO_UNKNOWN;
 }
 
-static int TFTPParseRequest(Flow *f, void *state,
-    AppLayerParserState *pstate, uint8_t *input, uint32_t input_len,
+static AppLayerResult TFTPParseRequest(Flow *f, void *state,
+    AppLayerParserState *pstate, const uint8_t *input, uint32_t input_len,
     void *local_data, const uint8_t flags)
 {
     SCLogDebug("Parsing echo request: len=%"PRIu32, input_len);
@@ -106,26 +105,30 @@ static int TFTPParseRequest(Flow *f, void *state,
     /* Likely connection closed, we can just return here. */
     if ((input == NULL || input_len == 0) &&
         AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF)) {
-        return 0;
+        SCReturnStruct(APP_LAYER_OK);
     }
 
     /* Probably don't want to create a transaction in this case
      * either. */
     if (input == NULL || input_len == 0) {
-        return 0;
+        SCReturnStruct(APP_LAYER_OK);
     }
 
-    return rs_tftp_request(state, input, input_len);
+    int res = rs_tftp_request(state, input, input_len);
+    if (res < 0) {
+        SCReturnStruct(APP_LAYER_ERROR);
+    }
+    SCReturnStruct(APP_LAYER_OK);
 }
 
 /**
  * \brief Response parsing is not implemented
  */
-static int TFTPParseResponse(Flow *f, void *state, AppLayerParserState *pstate,
-    uint8_t *input, uint32_t input_len, void *local_data,
+static AppLayerResult TFTPParseResponse(Flow *f, void *state, AppLayerParserState *pstate,
+    const uint8_t *input, uint32_t input_len, void *local_data,
     const uint8_t flags)
 {
-    return 0;
+    SCReturnStruct(APP_LAYER_OK);
 }
 
 static uint64_t TFTPGetTxCnt(void *state)
@@ -203,12 +206,12 @@ void RegisterTFTPParsers(void)
             AppLayerProtoDetectPPRegister(IPPROTO_UDP, TFTP_DEFAULT_PORT,
                                           ALPROTO_TFTP, 0, TFTP_MIN_FRAME_LEN,
                                           STREAM_TOSERVER, TFTPProbingParser,
-                                          NULL);
+                                          TFTPProbingParser);
         } else {
             if (!AppLayerProtoDetectPPParseConfPorts("udp", IPPROTO_UDP,
                                                      proto_name, ALPROTO_TFTP,
                                                      0, TFTP_MIN_FRAME_LEN,
-                                                     TFTPProbingParser, NULL)) {
+                                                     TFTPProbingParser, TFTPProbingParser)) {
                 SCLogDebug("No echo app-layer configuration, enabling echo"
                            " detection UDP detection on port %s.",
                            TFTP_DEFAULT_PORT);
@@ -216,7 +219,7 @@ void RegisterTFTPParsers(void)
                                               TFTP_DEFAULT_PORT, ALPROTO_TFTP,
                                               0, TFTP_MIN_FRAME_LEN,
                                               STREAM_TOSERVER,TFTPProbingParser,
-                                              NULL);
+                                              TFTPProbingParser);
             }
         }
     } else {

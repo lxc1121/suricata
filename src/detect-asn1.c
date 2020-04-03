@@ -148,21 +148,23 @@ static int DetectAsn1Match(DetectEngineThreadCtx *det_ctx, Packet *p,
     }
 
     const DetectAsn1Data *ad = (const DetectAsn1Data *)ctx;
+    int32_t offset;
+    if (ad->flags & ASN1_ABSOLUTE_OFFSET) {
+        offset = ad->absolute_offset;
+    } else if (ad->flags & ASN1_RELATIVE_OFFSET) {
+        offset = ad->relative_offset;
+    } else {
+        offset = 0;
+    }
+    if (offset >= (int32_t)p->payload_len) {
+        return 0;
+    }
 
     Asn1Ctx *ac = SCAsn1CtxNew();
     if (ac == NULL)
         return 0;
 
-    if (ad->flags & ASN1_ABSOLUTE_OFFSET) {
-        SCAsn1CtxInit(ac, p->payload + ad->absolute_offset,
-                      p->payload_len - ad->absolute_offset);
-    } else if (ad->flags & ASN1_RELATIVE_OFFSET) {
-        SCAsn1CtxInit(ac, p->payload + ad->relative_offset,
-                      p->payload_len - ad->relative_offset);
-    } else {
-        SCAsn1CtxInit(ac, p->payload, p->payload_len);
-    }
-
+    SCAsn1CtxInit(ac, p->payload + offset, p->payload_len - offset);
     SCAsn1Decode(ac, ac->cur_frame);
 
     /* Ok, now we have all the data. Let's check the nodes */
@@ -231,7 +233,7 @@ static DetectAsn1Data *DetectAsn1Parse(const char *instr)
             /* get the param */
             tok = strtok_r(NULL, ASN_DELIM, &saveptr);
             if ( tok == NULL ||
-                ByteExtractStringUint32(&ov_len, 10, 0, tok) <= 0)
+                StringParseUint32(&ov_len, 10, 0, tok) <= 0)
             {
                 SCLogError(SC_ERR_INVALID_VALUE, "Malformed value for "
                            "oversize_length: %s", tok);
@@ -242,7 +244,7 @@ static DetectAsn1Data *DetectAsn1Parse(const char *instr)
             /* get the param */
             tok = strtok_r(NULL, ASN_DELIM, &saveptr);
             if (tok == NULL ||
-                ByteExtractStringUint32(&abs_off, 10, 0, tok) <= 0)
+                StringParseUint32(&abs_off, 10, 0, tok) <= 0)
             {
                 SCLogError(SC_ERR_INVALID_VALUE, "Malformed value for "
                            "absolute_offset: %s", tok);
@@ -253,7 +255,7 @@ static DetectAsn1Data *DetectAsn1Parse(const char *instr)
             /* get the param */
             tok = strtok_r(NULL, ASN_DELIM, &saveptr);
             if (tok == NULL ||
-                ByteExtractStringInt32(&rel_off, 10, 0, tok) <= 0)
+                StringParseInt32(&rel_off, 10, 0, tok) <= 0)
             {
                 SCLogError(SC_ERR_INVALID_VALUE, "Malformed value for "
                            "relative_offset: %s", tok);

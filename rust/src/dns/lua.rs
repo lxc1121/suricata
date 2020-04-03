@@ -17,9 +17,9 @@
 
 use std::os::raw::c_int;
 
-use lua::*;
-use dns::dns::*;
-use dns::log::*;
+use crate::lua::*;
+use crate::dns::dns::*;
+use crate::dns::log::*;
 
 #[no_mangle]
 pub extern "C" fn rs_dns_lua_get_tx_id(clua: &mut CLuaState,
@@ -51,6 +51,24 @@ pub extern "C" fn rs_dns_lua_get_rrname(clua: &mut CLuaState,
             lua.pushstring(&String::from_utf8_lossy(&query.name));
             return 1;
         }
+    }
+
+    return 0;
+}
+
+#[no_mangle]
+pub extern "C" fn rs_dns_lua_get_rcode(clua: &mut CLuaState,
+                                       tx: &mut DNSTransaction)
+                                       -> c_int
+{
+    let lua = LuaState{
+        lua: clua,
+    };
+
+    let rcode = tx.rcode();
+    if rcode > 0 {
+        lua.pushstring(&dns_rcode_string(rcode));
+        return 1;
     }
 
     return 0;

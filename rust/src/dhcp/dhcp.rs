@@ -1,4 +1,4 @@
-/* Copyright (C) 2018 Open Information Security Foundation
+/* Copyright (C) 2018-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -15,13 +15,12 @@
  * 02110-1301, USA.
  */
 
-use applayer;
-use core;
-use core::{ALPROTO_UNKNOWN, AppProto, Flow, IPPROTO_UDP};
-use core::{sc_detect_engine_state_free, sc_app_layer_decoder_events_free_events};
-use dhcp::parser::*;
-use log::*;
-use parser::*;
+use crate::applayer::{self, *};
+use crate::core;
+use crate::core::{ALPROTO_UNKNOWN, AppProto, Flow, IPPROTO_UDP};
+use crate::core::{sc_detect_engine_state_free, sc_app_layer_decoder_events_free_events};
+use crate::dhcp::parser::*;
+use crate::log::*;
 use std;
 use std::ffi::{CStr,CString};
 use std::mem::transmute;
@@ -289,13 +288,13 @@ pub extern "C" fn rs_dhcp_parse(_flow: *const core::Flow,
                                 input: *const u8,
                                 input_len: u32,
                                 _data: *const std::os::raw::c_void,
-                                _flags: u8) -> i32 {
+                                _flags: u8) -> AppLayerResult {
     let state = cast_pointer!(state, DHCPState);
     let buf = build_slice!(input, input_len as usize);
     if state.parse(buf) {
-        return 1;
+        return AppLayerResult::ok();
     }
-    return -1;
+    return AppLayerResult::err();
 }
 
 #[no_mangle]
@@ -426,8 +425,8 @@ pub unsafe extern "C" fn rs_dhcp_register_parser() {
         name: PARSER_NAME.as_ptr() as *const std::os::raw::c_char,
         default_port       : ports.as_ptr(),
         ipproto            : IPPROTO_UDP,
-        probe_ts           : rs_dhcp_probing_parser,
-        probe_tc           : rs_dhcp_probing_parser,
+        probe_ts           : Some(rs_dhcp_probing_parser),
+        probe_tc           : Some(rs_dhcp_probing_parser),
         min_depth          : 0,
         max_depth          : 16,
         state_new          : rs_dhcp_state_new,
@@ -452,6 +451,8 @@ pub unsafe extern "C" fn rs_dhcp_register_parser() {
         set_tx_mpm_id      : None,
         get_files          : None,
         get_tx_iterator    : Some(rs_dhcp_state_get_tx_iterator),
+        set_tx_detect_flags: None,
+        get_tx_detect_flags: None,
     };
 
     let ip_proto_str = CString::new("udp").unwrap();

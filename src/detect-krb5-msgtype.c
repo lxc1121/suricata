@@ -1,4 +1,4 @@
-/* Copyright (C) 2018 Open Information Security Foundation
+/* Copyright (C) 2018-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -29,17 +29,14 @@
 
 #include "detect-krb5-msgtype.h"
 
-#ifdef HAVE_RUST
-
 #include "app-layer-krb5.h"
-#include "rust-krb-detect-gen.h"
+#include "rust.h"
 
 /**
  * \brief Regex for parsing our keyword options
  */
 #define PARSE_REGEX  "^\\s*([A-z0-9\\.]+|\"[A-z0-9_\\.]+\")\\s*$"
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 /* Prototypes of functions registered in DetectKrb5MsgTypeRegister below */
 static int DetectKrb5MsgTypeMatch (DetectEngineThreadCtx *, Flow *,
@@ -65,7 +62,7 @@ static int g_krb5_msg_type_list_id = 0;
 void DetectKrb5MsgTypeRegister(void) {
     sigmatch_table[DETECT_AL_KRB5_MSGTYPE].name = "krb5_msg_type";
     sigmatch_table[DETECT_AL_KRB5_MSGTYPE].desc = "match Kerberos 5 message type";
-    sigmatch_table[DETECT_AL_KRB5_MSGTYPE].url = DOC_URL DOC_VERSION "/rules/kerberos-keywords.html#krb5_msg_type";
+    sigmatch_table[DETECT_AL_KRB5_MSGTYPE].url = DOC_URL DOC_VERSION "/rules/kerberos-keywords.html#krb5-msg-type";
     sigmatch_table[DETECT_AL_KRB5_MSGTYPE].Match = NULL;
     sigmatch_table[DETECT_AL_KRB5_MSGTYPE].AppLayerTxMatch = DetectKrb5MsgTypeMatch;
     sigmatch_table[DETECT_AL_KRB5_MSGTYPE].Setup = DetectKrb5MsgTypeSetup;
@@ -81,7 +78,7 @@ void DetectKrb5MsgTypeRegister(void) {
             DetectEngineInspectKRB5Generic);
 
     /* set up the PCRE for keyword parsing */
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 
     g_krb5_msg_type_list_id = DetectBufferTypeRegister("krb5_msg_type");
     SCLogDebug("g_krb5_msg_type_list_id %d", g_krb5_msg_type_list_id);
@@ -138,13 +135,10 @@ static DetectKrb5MsgTypeData *DetectKrb5MsgTypeParse (const char *krb5str)
 {
     DetectKrb5MsgTypeData *krb5d = NULL;
     char arg1[4] = "";
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
 
-    ret = pcre_exec(parse_regex, parse_regex_study,
-                    krb5str, strlen(krb5str),
-                    0, 0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, krb5str, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret != 2) {
         SCLogError(SC_ERR_PCRE_MATCH, "parse error, ret %" PRId32 "", ret);
         goto error;
@@ -261,11 +255,3 @@ static void DetectKrb5MsgTypeRegisterTests(void) {
                    DetectKrb5MsgTypeSignatureTest01);
 #endif /* UNITTESTS */
 }
-
-#else /* HAVE_RUST */
-
-void DetectKrb5MsgTypeRegister(void)
-{
-}
-
-#endif /* HAVE_RUST */

@@ -23,9 +23,7 @@ from __future__ import print_function
 
 import sys
 import re
-from cStringIO import StringIO
 import yaml
-import types
 
 import jinja2
 
@@ -158,8 +156,6 @@ output_json_dnp3_objects_template = """/* Copyright (C) 2015 Open Information Se
 #include "app-layer-dnp3-objects.h"
 #include "output-json-dnp3-objects.h"
 
-#ifdef HAVE_LIBJANSSON
-
 void OutputJsonDNP3SetItem(json_t *js, DNP3Object *object,
     DNP3Point *point)
 {
@@ -214,8 +210,6 @@ void OutputJsonDNP3SetItem(json_t *js, DNP3Object *object,
     }
 
 }
-
-#endif /* HAVE_LIBJANSSON */
 
 """
 

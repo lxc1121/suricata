@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -45,9 +45,11 @@ const char * SCErrorToString(SCError err)
         CASE_CODE (SC_ERR_ACTION_ORDER);
         CASE_CODE (SC_ERR_PCRE_MATCH);
         CASE_CODE (SC_ERR_PCRE_GET_SUBSTRING);
+        CASE_CODE (SC_ERR_PCRE_COPY_SUBSTRING);
         CASE_CODE (SC_ERR_PCRE_COMPILE);
         CASE_CODE (SC_ERR_PCRE_STUDY);
         CASE_CODE (SC_ERR_PCRE_PARSE);
+        CASE_CODE (SC_WARN_PCRE_JITSTACK);
         CASE_CODE (SC_ERR_LOG_MODULE_NOT_INIT);
         CASE_CODE (SC_ERR_LOG_FG_FILTER_MATCH);
         CASE_CODE (SC_ERR_PCAP_DISPATCH);
@@ -361,6 +363,11 @@ const char * SCErrorToString(SCError err)
         CASE_CODE (SC_WARN_RUST_NOT_AVAILABLE);
         CASE_CODE (SC_WARN_DEFAULT_WILL_CHANGE);
         CASE_CODE (SC_WARN_EVE_MISSING_EVENTS);
+        CASE_CODE (SC_ERR_THASH_INIT);
+        CASE_CODE (SC_ERR_DATASET);
+        CASE_CODE (SC_WARN_ANOMALY_CONFIG);
+        CASE_CODE (SC_WARN_ALERT_CONFIG);
+        CASE_CODE (SC_WARN_REGISTRATION_FAILED);
 
         CASE_CODE (SC_ERR_MAX);
     }

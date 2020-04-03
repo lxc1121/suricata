@@ -56,6 +56,10 @@ char SCClassConfClasstypeHashCompareFunc(void *data1, uint16_t datalen1,
 void SCClassConfClasstypeHashFree(void *ch);
 static const char *SCClassConfGetConfFilename(const DetectEngineCtx *de_ctx);
 
+static SCClassConfClasstype *SCClassConfAllocClasstype(uint16_t classtype_id,
+        const char *classtype, const char *classtype_desc, int priority);
+static void SCClassConfDeAllocClasstype(SCClassConfClasstype *ct);
+
 void SCClassConfInit(void)
 {
     const char *eb = NULL;
@@ -102,13 +106,15 @@ void SCClassConfDeinit(void)
  *        file.
  *
  * \param de_ctx Pointer to the Detection Engine Context.
+ * \param fd Pointer to already opened file
+ *
+ * \note even if the file open fails we will keep the de_ctx->class_conf_ht
+ *       initialized.
  *
  * \retval fp NULL on error
  */
 static FILE *SCClassConfInitContextAndLocalResources(DetectEngineCtx *de_ctx, FILE *fd)
 {
-    const char *filename = NULL;
-
     /* init the hash table to be used by the classification config Classtypes */
     de_ctx->class_conf_ht = HashTableInit(128, SCClassConfClasstypeHashFunc,
                                           SCClassConfClasstypeHashCompareFunc,
@@ -116,7 +122,7 @@ static FILE *SCClassConfInitContextAndLocalResources(DetectEngineCtx *de_ctx, FI
     if (de_ctx->class_conf_ht == NULL) {
         SCLogError(SC_ERR_HASH_TABLE_INIT, "Error initializing the hash "
                    "table");
-        goto error;
+        return NULL;
     }
 
     /* if it is not NULL, use the file descriptor.  The hack so that we can
@@ -124,30 +130,19 @@ static FILE *SCClassConfInitContextAndLocalResources(DetectEngineCtx *de_ctx, FI
      * instead use an input stream against a buffer containing the
      * classification strings */
     if (fd == NULL) {
-        filename = SCClassConfGetConfFilename(de_ctx);
+        const char *filename = SCClassConfGetConfFilename(de_ctx);
         if ( (fd = fopen(filename, "r")) == NULL) {
 #ifdef UNITTESTS
             if (RunmodeIsUnittests())
-                goto error; // silently fail
+                return NULL; // silently fail
 #endif
-            SCLogError(SC_ERR_FOPEN, "Error opening file: \"%s\": %s", filename, strerror(errno));
-            goto error;
+            SCLogWarning(SC_ERR_FOPEN, "could not open: \"%s\": %s",
+                    filename, strerror(errno));
+            return NULL;
         }
     }
 
     return fd;
-
- error:
-    if (de_ctx->class_conf_ht != NULL) {
-        HashTableFree(de_ctx->class_conf_ht);
-        de_ctx->class_conf_ht = NULL;
-    }
-    if (fd != NULL) {
-        fclose(fd);
-        fd = NULL;
-    }
-
-    return NULL;
 }
 
 
@@ -244,13 +239,13 @@ static char *SCClassConfStringToLowercase(const char *str)
  * \retval  0 On success.
  * \retval -1 On failure.
  */
-static int SCClassConfAddClasstype(char *rawstr, uint8_t index, DetectEngineCtx *de_ctx)
+int SCClassConfAddClasstype(DetectEngineCtx *de_ctx, char *rawstr, uint16_t index)
 {
-    char ct_name[64];
-    char ct_desc[512];
+    char ct_name[CLASSTYPE_NAME_MAX_LEN];
+    char ct_desc[CLASSTYPE_DESC_MAX_LEN];
     char ct_priority_str[16];
     int ct_priority = 0;
-    uint8_t ct_id = index;
+    uint16_t ct_id = index;
 
     SCClassConfClasstype *ct_new = NULL;
     SCClassConfClasstype *ct_lookup = NULL;
@@ -355,13 +350,13 @@ static int SCClassConfIsLineBlankOrComment(char *line)
 static void SCClassConfParseFile(DetectEngineCtx *de_ctx, FILE *fd)
 {
     char line[1024];
-    uint8_t i = 1;
+    uint16_t i = 1;
 
     while (fgets(line, sizeof(line), fd) != NULL) {
         if (SCClassConfIsLineBlankOrComment(line))
             continue;
 
-        SCClassConfAddClasstype(line, i, de_ctx);
+        SCClassConfAddClasstype(de_ctx, line, i);
         i++;
     }
 
@@ -374,6 +369,7 @@ static void SCClassConfParseFile(DetectEngineCtx *de_ctx, FILE *fd)
 }
 
 /**
+ * \internal
  * \brief Returns a new SCClassConfClasstype instance.  The classtype string
  *        is converted into lowercase, before being assigned to the instance.
  *
@@ -384,7 +380,7 @@ static void SCClassConfParseFile(DetectEngineCtx *de_ctx, FILE *fd)
  * \retval ct Pointer to the new instance of SCClassConfClasstype on success;
  *            NULL on failure.
  */
-SCClassConfClasstype *SCClassConfAllocClasstype(uint8_t classtype_id,
+static SCClassConfClasstype *SCClassConfAllocClasstype(uint16_t classtype_id,
                                                 const char *classtype,
                                                 const char *classtype_desc,
                                                 int priority)
@@ -420,11 +416,12 @@ SCClassConfClasstype *SCClassConfAllocClasstype(uint8_t classtype_id,
 }
 
 /**
+ * \internal
  * \brief Frees a SCClassConfClasstype instance
  *
  * \param Pointer to the SCClassConfClasstype instance that has to be freed
  */
-void SCClassConfDeAllocClasstype(SCClassConfClasstype *ct)
+static void SCClassConfDeAllocClasstype(SCClassConfClasstype *ct)
 {
     if (ct != NULL) {
         if (ct->classtype != NULL)
@@ -568,7 +565,7 @@ SCClassConfClasstype *SCClassConfGetClasstype(const char *ct_name,
         name[s] = tolower((unsigned char)ct_name[s]);
     name[s] = '\0';
 
-    SCClassConfClasstype ct_lookup = {0, name, NULL, 0 };
+    SCClassConfClasstype ct_lookup = {0, 0, name, NULL };
     SCClassConfClasstype *lookup_ct_info = HashTableLookup(de_ctx->class_conf_ht,
                                                            &ct_lookup, 0);
     return lookup_ct_info;
@@ -817,23 +814,16 @@ static int SCClassConfTest06(void)
     return result;
 }
 
-#endif /* UNITTESTS */
-
 /**
  * \brief This function registers unit tests for Classification Config API.
  */
 void SCClassConfRegisterTests(void)
 {
-
-#ifdef UNITTESTS
-
     UtRegisterTest("SCClassConfTest01", SCClassConfTest01);
     UtRegisterTest("SCClassConfTest02", SCClassConfTest02);
     UtRegisterTest("SCClassConfTest03", SCClassConfTest03);
     UtRegisterTest("SCClassConfTest04", SCClassConfTest04);
     UtRegisterTest("SCClassConfTest05", SCClassConfTest05);
     UtRegisterTest("SCClassConfTest06", SCClassConfTest06);
-
-#endif /* UNITTESTS */
-
 }
+#endif /* UNITTESTS */

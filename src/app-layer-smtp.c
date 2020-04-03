@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2012 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -55,6 +55,7 @@
 
 #include "util-mem.h"
 #include "util-misc.h"
+#include "util-validate.h"
 
 /* content-limit default value */
 #define FILEDATA_CONTENT_LIMIT 100000
@@ -146,6 +147,8 @@ SCEnumCharMap smtp_decoder_event_table[ ] = {
       SMTP_DECODER_EVENT_MIME_LONG_HEADER_VALUE },
     { "MIME_LONG_BOUNDARY",
       SMTP_DECODER_EVENT_MIME_BOUNDARY_TOO_LONG },
+    { "MIME_LONG_FILENAME",
+      SMTP_DECODER_EVENT_MIME_LONG_FILENAME },
 
     /* Invalid behavior or content */
     { "DUPLICATE_FIELDS",
@@ -368,41 +371,6 @@ static SMTPTransaction *SMTPTransactionCreate(void)
     return tx;
 }
 
-/** \internal
- *  \brief update inspected tracker if it gets to far behind
- *
- *  As smtp uses the FILE_USE_DETECT flag in the file API, we are responsible
- *  for making sure that File::content_inspected is not getting too far
- *  behind.
- */
-static void SMTPPruneFiles(FileContainer *files)
-{
-    SCLogDebug("cfg: win %"PRIu32" min_size %"PRIu32,
-            smtp_config.content_inspect_window, smtp_config.content_inspect_min_size);
-
-    File *file = files->head;
-    while (file) {
-        SCLogDebug("file %p", file);
-        uint32_t window = smtp_config.content_inspect_window;
-        if (file->sb->stream_offset == 0)
-            window = MAX(window, smtp_config.content_inspect_min_size);
-
-        uint64_t file_size = FileDataSize(file);
-        uint64_t data_size = file_size - file->sb->stream_offset;
-
-        SCLogDebug("window %"PRIu32", file_size %"PRIu64", data_size %"PRIu64,
-                window, file_size, data_size);
-
-        if (data_size > (window * 3)) {
-            uint64_t left_edge = file_size - window;
-            SCLogDebug("file->content_inspected now %"PRIu64, left_edge);
-            file->content_inspected = left_edge;
-        }
-
-        file = file->next;
-    }
-}
-
 static void FlagDetectStateNewFile(SMTPTransaction *tx)
 {
     if (tx && tx->de_state) {
@@ -413,6 +381,27 @@ static void FlagDetectStateNewFile(SMTPTransaction *tx)
     } else if (tx->de_state == NULL) {
         SCLogDebug("DETECT_ENGINE_STATE_FLAG_FILE_NEW NOT set, no TX DESTATE");
     }
+}
+
+static void SMTPNewFile(SMTPTransaction *tx, File *file)
+{
+    DEBUG_VALIDATE_BUG_ON(tx == NULL);
+    DEBUG_VALIDATE_BUG_ON(file == NULL);
+#ifdef UNITTESTS
+    if (RunmodeIsUnittests()) {
+        if (tx == NULL || file == NULL) {
+            return;
+        }
+    }
+#endif
+    FlagDetectStateNewFile(tx);
+    FileSetTx(file, tx->tx_id);
+
+    /* set inspect sizes used in file pruning logic.
+     * TODO consider moving this to the file.data code that
+     * would actually have use for this. */
+    FileSetInspectSizes(file, smtp_config.content_inspect_window,
+            smtp_config.content_inspect_min_size);
 }
 
 int SMTPProcessDataChunk(const uint8_t *chunk, uint32_t len,
@@ -461,13 +450,18 @@ int SMTPProcessDataChunk(const uint8_t *chunk, uint32_t len,
                 flags |= FILE_STORE;
             }
 
+            uint32_t depth = smtp_config.content_inspect_min_size +
+                (smtp_state->toserver_data_count - smtp_state->toserver_last_data_stamp);
+            SCLogDebug("StreamTcpReassemblySetMinInspectDepth STREAM_TOSERVER %"PRIu32, depth);
+            StreamTcpReassemblySetMinInspectDepth(flow->protoctx, STREAM_TOSERVER, depth);
+
             if (FileOpenFileWithId(files, &smtp_config.sbcfg, smtp_state->file_track_id++,
                         (uint8_t *) entity->filename, entity->filename_len,
                         (uint8_t *) chunk, len, flags) != 0) {
                 ret = MIME_DEC_ERR_DATA;
                 SCLogDebug("FileOpenFile() failed");
             }
-            FlagDetectStateNewFile(smtp_state->curr_tx);
+            SMTPNewFile(smtp_state->curr_tx, files->tail);
 
             /* If close in the same chunk, then pass in empty bytes */
             if (state->body_end) {
@@ -483,12 +477,19 @@ int SMTPProcessDataChunk(const uint8_t *chunk, uint32_t len,
                 } else {
                     SCLogDebug("File already closed");
                 }
+                depth = smtp_state->toserver_data_count - smtp_state->toserver_last_data_stamp;
+
+                AppLayerParserTriggerRawStreamReassembly(flow, STREAM_TOSERVER);
+                SCLogDebug("StreamTcpReassemblySetMinInspectDepth STREAM_TOSERVER %u",
+                        depth);
+                StreamTcpReassemblySetMinInspectDepth(flow->protoctx, STREAM_TOSERVER,
+                        depth);
             }
         } else if (state->body_end) {
             /* Close file */
             SCLogDebug("Closing file...%u bytes", len);
 
-            if (files && files->tail && files->tail->state == FILE_STATE_OPENED) {
+            if (files->tail && files->tail->state == FILE_STATE_OPENED) {
                 ret = FileCloseFile(files, (uint8_t *) chunk, len, flags);
                 if (ret != 0) {
                     SCLogDebug("FileCloseFile() failed: %d", ret);
@@ -497,6 +498,12 @@ int SMTPProcessDataChunk(const uint8_t *chunk, uint32_t len,
             } else {
                 SCLogDebug("File already closed");
             }
+            uint32_t depth = smtp_state->toserver_data_count - smtp_state->toserver_last_data_stamp;
+            AppLayerParserTriggerRawStreamReassembly(flow, STREAM_TOSERVER);
+            SCLogDebug("StreamTcpReassemblySetMinInspectDepth STREAM_TOSERVER %u",
+                    depth);
+            StreamTcpReassemblySetMinInspectDepth(flow->protoctx,
+                    STREAM_TOSERVER, depth);
         } else {
             /* Append data chunk to file */
             SCLogDebug("Appending file...%u bytes", len);
@@ -510,6 +517,32 @@ int SMTPProcessDataChunk(const uint8_t *chunk, uint32_t len,
                 SCLogDebug("FileAppendData() failed: %d", ret);
                 ret = MIME_DEC_ERR_DATA;
             }
+
+            if (files->tail && files->tail->content_inspected == 0 &&
+                    files->tail->size >= smtp_config.content_inspect_min_size) {
+                uint32_t depth = smtp_config.content_inspect_min_size +
+                    (smtp_state->toserver_data_count - smtp_state->toserver_last_data_stamp);
+                AppLayerParserTriggerRawStreamReassembly(flow, STREAM_TOSERVER);
+                SCLogDebug("StreamTcpReassemblySetMinInspectDepth STREAM_TOSERVER %u",
+                        depth);
+                StreamTcpReassemblySetMinInspectDepth(flow->protoctx,
+                        STREAM_TOSERVER, depth);
+
+            /* after the start of the body inspection, disable the depth logic */
+            } else if (files->tail && files->tail->content_inspected > 0) {
+                StreamTcpReassemblySetMinInspectDepth(flow->protoctx,
+                        STREAM_TOSERVER, 0);
+
+            /* expand the limit as long as we get file data, as the file data is bigger on the
+             * wire due to base64 */
+            } else {
+                uint32_t depth = smtp_config.content_inspect_min_size +
+                    (smtp_state->toserver_data_count - smtp_state->toserver_last_data_stamp);
+                SCLogDebug("StreamTcpReassemblySetMinInspectDepth STREAM_TOSERVER %"PRIu32,
+                        depth);
+                StreamTcpReassemblySetMinInspectDepth(flow->protoctx,
+                        STREAM_TOSERVER, depth);
+            }
         }
 
         if (ret == 0) {
@@ -518,12 +551,6 @@ int SMTPProcessDataChunk(const uint8_t *chunk, uint32_t len,
     } else {
         SCLogDebug("Body not a Ctnt_attachment");
     }
-
-    if (files != NULL) {
-        SMTPPruneFiles(files);
-        FilePrune(files);
-    }
-
     SCReturnInt(ret);
 }
 
@@ -533,7 +560,7 @@ int SMTPProcessDataChunk(const uint8_t *chunk, uint32_t len,
  *
  * \param state The smtp state.
  *
- * \retval  0 On suceess.
+ * \retval  0 On success.
  * \retval -1 Either when we don't have any new lines to supply anymore or
  *            on failure.
  */
@@ -848,6 +875,9 @@ static void SetMimeEvents(SMTPState *state)
     if (msg->anomaly_flags & ANOM_LONG_BOUNDARY) {
         SMTPSetEvent(state, SMTP_DECODER_EVENT_MIME_BOUNDARY_TOO_LONG);
     }
+    if (msg->anomaly_flags & ANOM_LONG_FILENAME) {
+        SMTPSetEvent(state, SMTP_DECODER_EVENT_MIME_LONG_FILENAME);
+    }
 }
 
 /**
@@ -860,7 +890,7 @@ static int SMTPProcessCommandDATA(SMTPState *state, Flow *f,
     SCEnter();
 
     if (!(state->parser_state & SMTP_PARSER_STATE_COMMAND_DATA_MODE)) {
-        /* looks like are still waiting for a confirmination from the server */
+        /* looks like are still waiting for a confirmation from the server */
         return 0;
     }
 
@@ -1173,7 +1203,16 @@ static int SMTPProcessRequest(SMTPState *state, Flow *f,
         state->curr_tx = tx;
         TAILQ_INSERT_TAIL(&state->tx_list, tx, next);
         tx->tx_id = state->tx_cnt++;
+
+        /* keep track of the start of the tx */
+        state->toserver_last_data_stamp = state->toserver_data_count;
+        StreamTcpReassemblySetMinInspectDepth(f->protoctx, STREAM_TOSERVER,
+                smtp_config.content_inspect_min_size);
     }
+
+    state->toserver_data_count += (
+        state->current_line_len +
+        state->current_line_delimiter_len);
 
     if (!(state->parser_state & SMTP_PARSER_STATE_FIRST_REPLY_SEEN)) {
         SMTPSetEvent(state, SMTP_DECODER_EVENT_NO_SERVER_WELCOME_MESSAGE);
@@ -1211,8 +1250,8 @@ static int SMTPProcessRequest(SMTPState *state, Flow *f,
                 if (FileOpenFileWithId(state->files_ts, &smtp_config.sbcfg,
                         state->file_track_id++,
                         (uint8_t*) msgname, strlen(msgname), NULL, 0,
-                        FILE_NOMD5|FILE_NOMAGIC) == 0) {
-                    FlagDetectStateNewFile(state->curr_tx);
+                        FILE_NOMD5|FILE_NOMAGIC|FILE_USE_DETECT) == 0) {
+                    SMTPNewFile(state->curr_tx, state->files_ts->tail);
                 }
             } else if (smtp_config.decode_mime) {
                 if (tx->mime_state) {
@@ -1314,17 +1353,17 @@ static int SMTPProcessRequest(SMTPState *state, Flow *f,
     }
 }
 
-static int SMTPParse(int direction, Flow *f, SMTPState *state,
-                     AppLayerParserState *pstate, uint8_t *input,
+static AppLayerResult SMTPParse(int direction, Flow *f, SMTPState *state,
+                     AppLayerParserState *pstate, const uint8_t *input,
                      uint32_t input_len,
                      SMTPThreadCtx *thread_data)
 {
     SCEnter();
 
     if (input == NULL && AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF)) {
-        SCReturnInt(1);
+        SCReturnStruct(APP_LAYER_OK);
     } else if (input == NULL || input_len == 0) {
-        SCReturnInt(-1);
+        SCReturnStruct(APP_LAYER_ERROR);
     }
 
     state->input = input;
@@ -1335,23 +1374,23 @@ static int SMTPParse(int direction, Flow *f, SMTPState *state,
     if (direction == 0) {
         while (SMTPGetLine(state) >= 0) {
             if (SMTPProcessRequest(state, f, pstate) == -1)
-                SCReturnInt(-1);
+                SCReturnStruct(APP_LAYER_ERROR);
         }
 
         /* toclient */
     } else {
         while (SMTPGetLine(state) >= 0) {
             if (SMTPProcessReply(state, f, pstate, thread_data) == -1)
-                SCReturnInt(-1);
+                SCReturnStruct(APP_LAYER_ERROR);
         }
     }
 
-    SCReturnInt(0);
+    SCReturnStruct(APP_LAYER_OK);
 }
 
-static int SMTPParseClientRecord(Flow *f, void *alstate,
+static AppLayerResult SMTPParseClientRecord(Flow *f, void *alstate,
                                  AppLayerParserState *pstate,
-                                 uint8_t *input, uint32_t input_len,
+                                 const uint8_t *input, uint32_t input_len,
                                  void *local_data, const uint8_t flags)
 {
     SCEnter();
@@ -1360,9 +1399,9 @@ static int SMTPParseClientRecord(Flow *f, void *alstate,
     return SMTPParse(0, f, alstate, pstate, input, input_len, local_data);
 }
 
-static int SMTPParseServerRecord(Flow *f, void *alstate,
+static AppLayerResult SMTPParseServerRecord(Flow *f, void *alstate,
                                  AppLayerParserState *pstate,
-                                 uint8_t *input, uint32_t input_len,
+                                 const uint8_t *input, uint32_t input_len,
                                  void *local_data, const uint8_t flags)
 {
     SCEnter();
@@ -3015,7 +3054,7 @@ end:
 }
 
 /*
- * \test Test smtp with just <LF> delimter instead of <CR><LF>.
+ * \test Test smtp with just <LF> delimiter instead of <CR><LF>.
  */
 static int SMTPParserTest04(void)
 {
@@ -5123,7 +5162,10 @@ static int SMTPProcessDataChunkTest02(void){
             0x41, 0x3D, 0x3D, 0x0D, 0x0A,};
 
     Flow f;
+    TcpSession ssn;
+    memset(&ssn, 0, sizeof(ssn));
     FLOW_INITIALIZE(&f);
+    f.protoctx = &ssn;
     f.alstate = SMTPStateAlloc();
     MimeDecParseState *state = MimeDecInitParser(&f, NULL);
     ((MimeDecEntity *)state->stack->top->data)->ctnt_flags = CTNT_IS_ATTACHMENT;
@@ -5150,8 +5192,11 @@ static int SMTPProcessDataChunkTest03(void){
     char mimemsg11[] = {0x64, 0x69, 0x6E, 0x67, 0x3A, 0x20, 0x62, 0x61, };
     char mimemsg12[] = {0x73, 0x65, 0x36, 0x34, 0x0D, 0x0A, 0x43, 0x6F, };
 
+    TcpSession ssn;
+    memset(&ssn, 0, sizeof(ssn));
     Flow f;
     FLOW_INITIALIZE(&f);
+    f.protoctx = &ssn;
     f.alstate = SMTPStateAlloc();
     MimeDecParseState *state = MimeDecInitParser(&f, NULL);
     ((MimeDecEntity *)state->stack->top->data)->ctnt_flags = CTNT_IS_ATTACHMENT;
@@ -5203,8 +5248,11 @@ static int SMTPProcessDataChunkTest04(void){
     char mimemsg10[] = {0x66, 0x65, 0x72, 0x2D, 0x45, 0x6E, 0x63, 0x6F, };
     char mimemsg11[] = {0x64, 0x69, 0x6E, 0x67, 0x3A, 0x20, 0x62, 0x61, };
 
+    TcpSession ssn;
+    memset(&ssn, 0, sizeof(ssn));
     Flow f;
     FLOW_INITIALIZE(&f);
+    f.protoctx = &ssn;
     f.alstate = SMTPStateAlloc();
     MimeDecParseState *state = MimeDecInitParser(&f, NULL);
     ((MimeDecEntity *)state->stack->top->data)->ctnt_flags = CTNT_IS_ATTACHMENT;
@@ -5239,9 +5287,12 @@ static int SMTPProcessDataChunkTest05(void){
             0x6A, 0x5A, 0x63, 0x65, 0x67, 0x41, 0x41, 0x4F,
             0x41, 0x3D, 0x3D, 0x0D, 0x0A,};
 
+    TcpSession ssn;
+    memset(&ssn, 0, sizeof(ssn));
     Flow f;
     int ret;
     FLOW_INITIALIZE(&f);
+    f.protoctx = &ssn;
     f.alstate = SMTPStateAlloc();
     FAIL_IF(f.alstate == NULL);
     MimeDecParseState *state = MimeDecInitParser(&f, NULL);

@@ -46,10 +46,7 @@
 
 #include "output-json-nfs.h"
 
-#ifdef HAVE_RUST
-#ifdef HAVE_LIBJANSSON
 #include "rust.h"
-#include "rust-nfs-log-gen.h"
 
 json_t *JsonNFSAddMetadataRPC(const Flow *f, uint64_t tx_id)
 {
@@ -134,19 +131,3 @@ void JsonNFSLogRegister(void)
 
     SCLogDebug("NFS JSON logger registered.");
 }
-
-#else /* No JSON support. */
-
-void JsonNFSLogRegister(void)
-{
-}
-
-#endif /* HAVE_LIBJANSSON */
-
-#else /* no rust */
-
-void JsonNFSLogRegister(void)
-{
-}
-
-#endif /* HAVE_RUST */

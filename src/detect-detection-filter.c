@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
   *
   * You can copy, redistribute or modify this Program under the terms of
   * the GNU General Public License version 2 as published by the Free
@@ -48,8 +48,7 @@
  */
 #define PARSE_REGEX "^\\s*(track|count|seconds)\\s+(by_src|by_dst|\\d+)\\s*,\\s*(track|count|seconds)\\s+(by_src|by_dst|\\d+)\\s*,\\s*(track|count|seconds)\\s+(by_src|by_dst|\\d+)\\s*$"
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 static int DetectDetectionFilterMatch(DetectEngineThreadCtx *,
         Packet *, const Signature *, const SigMatchCtx *);
@@ -72,7 +71,7 @@ void DetectDetectionFilterRegister (void)
     /* this is compatible to ip-only signatures */
     sigmatch_table[DETECT_DETECTION_FILTER].flags |= SIGMATCH_IPONLY_COMPAT;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
 static int DetectDetectionFilterMatch (DetectEngineThreadCtx *det_ctx,
@@ -93,7 +92,6 @@ static int DetectDetectionFilterMatch (DetectEngineThreadCtx *det_ctx,
 static DetectThresholdData *DetectDetectionFilterParse (const char *rawstr)
 {
     DetectThresholdData *df = NULL;
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
     const char *str_ptr = NULL;
@@ -127,7 +125,7 @@ static DetectThresholdData *DetectDetectionFilterParse (const char *rawstr)
     if (count_found != 1 || seconds_found != 1 || track_found != 1)
         goto error;
 
-    ret = pcre_exec(parse_regex, parse_regex_study, rawstr, strlen(rawstr), 0, 0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, rawstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret < 5) {
         SCLogError(SC_ERR_PCRE_MATCH, "pcre_exec parse error, ret %" PRId32 ", string %s", ret, rawstr);
         goto error;
@@ -164,12 +162,12 @@ static DetectThresholdData *DetectDetectionFilterParse (const char *rawstr)
         goto error;
     }
 
-    if (ByteExtractStringUint32(&df->count, 10, strlen(args[count_pos]),
+    if (StringParseUint32(&df->count, 10, strlen(args[count_pos]),
                 args[count_pos]) <= 0) {
         goto error;
     }
 
-    if (ByteExtractStringUint32(&df->seconds, 10, strlen(args[seconds_pos]),
+    if (StringParseUint32(&df->seconds, 10, strlen(args[seconds_pos]),
                 args[seconds_pos]) <= 0) {
         goto error;
     }

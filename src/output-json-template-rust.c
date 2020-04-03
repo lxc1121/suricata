@@ -52,10 +52,7 @@
 
 #include "app-layer-template-rust.h"
 #include "output-json-template-rust.h"
-
-#if defined(HAVE_LIBJANSSON) && defined(HAVE_RUST)
-
-#include "rust-applayertemplate-logger-gen.h"
+#include "rust.h"
 
 typedef struct LogTemplateFileCtx_ {
     LogFileCtx *file_ctx;
@@ -185,11 +182,3 @@ void JsonTemplateRustLogRegister(void)
 
     SCLogNotice("Template JSON logger registered.");
 }
-
-#else /* No JSON support. */
-
-void JsonTemplateRustLogRegister(void)
-{
-}
-
-#endif /* HAVE_LIBJANSSON */

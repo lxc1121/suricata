@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -47,8 +47,7 @@
  *  dsize:[<>]<0-65535>[<><0-65535>];
  */
 #define PARSE_REGEX "^\\s*(<|>)?\\s*([0-9]{1,5})\\s*(?:(<>)\\s*([0-9]{1,5}))?\\s*$"
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 static int DetectDsizeMatch (DetectEngineThreadCtx *, Packet *,
         const Signature *, const SigMatchCtx *);
@@ -57,7 +56,7 @@ static void DsizeRegisterTests(void);
 static void DetectDsizeFree(void *);
 
 static int PrefilterSetupDsize(DetectEngineCtx *de_ctx, SigGroupHead *sgh);
-static _Bool PrefilterDsizeIsPrefilterable(const Signature *s);
+static bool PrefilterDsizeIsPrefilterable(const Signature *s);
 
 /**
  * \brief Registration function for dsize: keyword
@@ -75,7 +74,7 @@ void DetectDsizeRegister (void)
     sigmatch_table[DETECT_DSIZE].SupportsPrefilter = PrefilterDsizeIsPrefilterable;
     sigmatch_table[DETECT_DSIZE].SetupPrefilter = PrefilterSetupDsize;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
 static inline int
@@ -138,7 +137,6 @@ static int DetectDsizeMatch (DetectEngineThreadCtx *det_ctx, Packet *p,
 static DetectDsizeData *DetectDsizeParse (const char *rawstr)
 {
     DetectDsizeData *dd = NULL;
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
     char mode[2] = "";
@@ -146,7 +144,7 @@ static DetectDsizeData *DetectDsizeParse (const char *rawstr)
     char value2[6] = "";
     char range[3] = "";
 
-    ret = pcre_exec(parse_regex, parse_regex_study, rawstr, strlen(rawstr), 0, 0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, rawstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret < 3 || ret > 5) {
         SCLogError(SC_ERR_PCRE_MATCH,"Parse error %s", rawstr);
         goto error;
@@ -209,7 +207,7 @@ static DetectDsizeData *DetectDsizeParse (const char *rawstr)
     }
 
     /** set the first dsize value */
-    if (ByteExtractStringUint16(&dd->dsize,10,strlen(value1),value1) <= 0) {
+    if (StringParseUint16(&dd->dsize,10,strlen(value1),value1) <= 0) {
         SCLogError(SC_ERR_INVALID_ARGUMENT, "Invalid size value1:\"%s\"", value1);
         goto error;
     }
@@ -221,7 +219,7 @@ static DetectDsizeData *DetectDsizeParse (const char *rawstr)
             goto error;
         }
 
-        if (ByteExtractStringUint16(&dd->dsize2,10,strlen(value2),value2) <= 0) {
+        if (StringParseUint16(&dd->dsize2,10,strlen(value2),value2) <= 0) {
             SCLogError(SC_ERR_INVALID_ARGUMENT,"Invalid size value2:\"%s\"",value2);
             goto error;
         }
@@ -343,7 +341,7 @@ PrefilterPacketDsizeSet(PrefilterPacketHeaderValue *v, void *smctx)
     v->u16[2] = a->dsize2;
 }
 
-static _Bool
+static bool
 PrefilterPacketDsizeCompare(PrefilterPacketHeaderValue v, void *smctx)
 {
     const DetectDsizeData *a = smctx;
@@ -362,7 +360,7 @@ static int PrefilterSetupDsize(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
             PrefilterPacketDsizeMatch);
 }
 
-static _Bool PrefilterDsizeIsPrefilterable(const Signature *s)
+static bool PrefilterDsizeIsPrefilterable(const Signature *s)
 {
     const SigMatch *sm;
     for (sm = s->init_data->smlists[DETECT_SM_LIST_MATCH] ; sm != NULL; sm = sm->next) {
@@ -907,7 +905,7 @@ static int DetectDsizeIcmpv6Test01 (void)
     p->dst.family = AF_INET6;
     p->ip6h = &ip6h;
 
-    DecodeIPV6(&tv, &dtv, p, raw_icmpv6, sizeof(raw_icmpv6), NULL);
+    DecodeIPV6(&tv, &dtv, p, raw_icmpv6, sizeof(raw_icmpv6));
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     if (de_ctx == NULL) {

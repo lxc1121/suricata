@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -61,8 +61,7 @@
 
 #define PARSE_REGEX "^\\s*(track|type|count|seconds)\\s+(limit|both|threshold|by_dst|by_src|\\d+)\\s*,\\s*(track|type|count|seconds)\\s+(limit|both|threshold|by_dst|by_src|\\d+)\\s*,\\s*(track|type|count|seconds)\\s+(limit|both|threshold|by_dst|by_src|\\d+)\\s*,\\s*(track|type|count|seconds)\\s+(limit|both|threshold|by_dst|by_src|\\d+)\\s*"
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 static int DetectThresholdMatch(DetectEngineThreadCtx *, Packet *,
         const Signature *, const SigMatchCtx *);
@@ -85,7 +84,7 @@ void DetectThresholdRegister(void)
     /* this is compatible to ip-only signatures */
     sigmatch_table[DETECT_THRESHOLD].flags |= SIGMATCH_IPONLY_COMPAT;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
 static int DetectThresholdMatch(DetectEngineThreadCtx *det_ctx, Packet *p,
@@ -106,7 +105,6 @@ static int DetectThresholdMatch(DetectEngineThreadCtx *det_ctx, Packet *p,
 static DetectThresholdData *DetectThresholdParse(const char *rawstr)
 {
     DetectThresholdData *de = NULL;
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
     const char *str_ptr = NULL;
@@ -143,8 +141,7 @@ static DetectThresholdData *DetectThresholdParse(const char *rawstr)
     if(count_found != 1 || second_found != 1 || type_found != 1 || track_found != 1)
         goto error;
 
-    ret = pcre_exec(parse_regex, parse_regex_study, rawstr, strlen(rawstr), 0, 0, ov, MAX_SUBSTRINGS);
-
+    ret = DetectParsePcreExec(&parse_regex, rawstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret < 5) {
         SCLogError(SC_ERR_PCRE_MATCH, "pcre_exec parse error, ret %" PRId32 ", string %s", ret, rawstr);
         goto error;
@@ -187,12 +184,12 @@ static DetectThresholdData *DetectThresholdParse(const char *rawstr)
         goto error;
     }
 
-    if (ByteExtractStringUint32(&de->count, 10, strlen(args[count_pos]),
+    if (StringParseUint32(&de->count, 10, strlen(args[count_pos]),
                 args[count_pos]) <= 0) {
         goto error;
     }
 
-    if (ByteExtractStringUint32(&de->seconds, 10, strlen(args[second_pos]),
+    if (StringParseUint32(&de->seconds, 10, strlen(args[second_pos]),
                 args[second_pos]) <= 0) {
         goto error;
     }
@@ -229,10 +226,15 @@ static int DetectThresholdSetup(DetectEngineCtx *de_ctx, Signature *s, const cha
     SigMatch *tmpm = NULL;
 
     /* checks if there is a previous instance of detection_filter */
-    tmpm = DetectGetLastSMFromLists(s, DETECT_DETECTION_FILTER, -1);
+    tmpm = DetectGetLastSMFromLists(s, DETECT_THRESHOLD, DETECT_DETECTION_FILTER, -1);
     if (tmpm != NULL) {
-        SCLogError(SC_ERR_INVALID_SIGNATURE, "\"detection_filter\" and "
-                "\"threshold\" are not allowed in the same rule");
+        if (tmpm->type == DETECT_DETECTION_FILTER) {
+            SCLogError(SC_ERR_INVALID_SIGNATURE, "\"detection_filter\" and "
+                    "\"threshold\" are not allowed in the same rule");
+        } else {
+            SCLogError(SC_ERR_INVALID_SIGNATURE, "multiple \"threshold\" "
+                    "options are not allowed in the same rule");
+        }
         SCReturnInt(-1);
     }
 
@@ -284,7 +286,7 @@ static void DetectThresholdFree(void *de_ptr)
 /**
  * \test ThresholdTestParse01 is a test for a valid threshold options
  *
- *  \retval 1 on succces
+ *  \retval 1 on success
  *  \retval 0 on failure
  */
 static int ThresholdTestParse01(void)
@@ -302,7 +304,7 @@ static int ThresholdTestParse01(void)
 /**
  * \test ThresholdTestParse02 is a test for a invalid threshold options
  *
- *  \retval 1 on succces
+ *  \retval 1 on success
  *  \retval 0 on failure
  */
 static int ThresholdTestParse02(void)
@@ -320,7 +322,7 @@ static int ThresholdTestParse02(void)
 /**
  * \test ThresholdTestParse03 is a test for a valid threshold options in any order
  *
- *  \retval 1 on succces
+ *  \retval 1 on success
  *  \retval 0 on failure
  */
 static int ThresholdTestParse03(void)
@@ -339,7 +341,7 @@ static int ThresholdTestParse03(void)
 /**
  * \test ThresholdTestParse04 is a test for an invalid threshold options in any order
  *
- *  \retval 1 on succces
+ *  \retval 1 on success
  *  \retval 0 on failure
  */
 static int ThresholdTestParse04(void)
@@ -357,7 +359,7 @@ static int ThresholdTestParse04(void)
 /**
  * \test ThresholdTestParse05 is a test for a valid threshold options in any order
  *
- *  \retval 1 on succces
+ *  \retval 1 on success
  *  \retval 0 on failure
  */
 static int ThresholdTestParse05(void)
@@ -378,7 +380,7 @@ static int ThresholdTestParse05(void)
  *       by setting up the signature and later testing its working by matching
  *       the received packet against the sig.
  *
- *  \retval 1 on succces
+ *  \retval 1 on success
  *  \retval 0 on failure
  */
 
@@ -482,7 +484,7 @@ end:
  *       by setting up the signature and later testing its working by matching
  *       the received packet against the sig.
  *
- *  \retval 1 on succces
+ *  \retval 1 on success
  *  \retval 0 on failure
  */
 
@@ -560,7 +562,7 @@ end:
  *       by setting up the signature and later testing its working by matching
  *       the received packet against the sig.
  *
- *  \retval 1 on succces
+ *  \retval 1 on success
  *  \retval 0 on failure
  */
 
@@ -665,7 +667,7 @@ end:
  *       by setting up the signature and later testing its working by matching
  *       the received packet against the sig.
  *
- *  \retval 1 on succces
+ *  \retval 1 on success
  *  \retval 0 on failure
  */
 
@@ -743,7 +745,7 @@ end:
  *       by setting up the signature and later testing its working by matching
  *       the received packet against the sig.
  *
- *  \retval 1 on succces
+ *  \retval 1 on success
  *  \retval 0 on failure
  */
 

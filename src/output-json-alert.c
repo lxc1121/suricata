@@ -46,7 +46,6 @@
 #include "detect-metadata.h"
 #include "app-layer-parser.h"
 #include "app-layer-dnp3.h"
-#include "app-layer-dns-common.h"
 #include "app-layer-htp.h"
 #include "app-layer-htp-xff.h"
 #include "app-layer-ftp.h"
@@ -67,6 +66,8 @@
 #include "output-json-nfs.h"
 #include "output-json-smb.h"
 #include "output-json-flow.h"
+#include "output-json-sip.h"
+#include "output-json-rfb.h"
 
 #include "util-byte.h"
 #include "util-privs.h"
@@ -78,8 +79,6 @@
 #include "util-validate.h"
 
 #define MODULE_NAME "JsonAlertLog"
-
-#ifdef HAVE_LIBJANSSON
 
 #define LOG_JSON_PAYLOAD           BIT_U16(0)
 #define LOG_JSON_PACKET            BIT_U16(1)
@@ -95,6 +94,8 @@
 #define METADATA_DEFAULTS ( LOG_JSON_FLOW |                        \
             LOG_JSON_APP_LAYER  |                                  \
             LOG_JSON_RULE_METADATA)
+
+#define JSON_BODY_LOGGING  (LOG_JSON_HTTP_BODY | LOG_JSON_HTTP_BODY_BASE64)
 
 #define JSON_STREAM_BUFFER_SIZE 4096
 
@@ -189,7 +190,7 @@ static void AlertJsonDnp3(const Flow *f, const uint64_t tx_id, json_t *js)
 
 static void AlertJsonDns(const Flow *f, const uint64_t tx_id, json_t *js)
 {
-    RSDNSState *dns_state = (RSDNSState *)FlowGetAppState(f);
+    void *dns_state = (void *)FlowGetAppState(f);
     if (dns_state) {
         void *txptr = AppLayerParserGetTx(f->proto, ALPROTO_DNS,
                                           dns_state, tx_id);
@@ -422,72 +423,73 @@ static int AlertJson(ThreadVars *tv, JsonAlertLogThread *aft, const Packet *p)
         }
 
         if (json_output_ctx->flags & LOG_JSON_APP_LAYER && p->flow != NULL) {
-            uint16_t proto = FlowGetAppProtocol(p->flow);
-
-            /* http alert */
-            if (proto == ALPROTO_HTTP) {
-                hjs = JsonHttpAddMetadata(p->flow, pa->tx_id);
-                if (hjs) {
-                    if (json_output_ctx->flags & LOG_JSON_HTTP_BODY) {
-                        JsonHttpLogJSONBodyPrintable(hjs, p->flow, pa->tx_id);
+            const AppProto proto = FlowGetAppProtocol(p->flow);
+            switch (proto) {
+                case ALPROTO_HTTP:
+                    hjs = JsonHttpAddMetadata(p->flow, pa->tx_id);
+                    if (hjs) {
+                        if (json_output_ctx->flags & LOG_JSON_HTTP_BODY) {
+                            JsonHttpLogJSONBodyPrintable(hjs, p->flow, pa->tx_id);
+                        }
+                        if (json_output_ctx->flags & LOG_JSON_HTTP_BODY_BASE64) {
+                            JsonHttpLogJSONBodyBase64(hjs, p->flow, pa->tx_id);
+                        }
+                        json_object_set_new(js, "http", hjs);
                     }
-                    if (json_output_ctx->flags & LOG_JSON_HTTP_BODY_BASE64) {
-                        JsonHttpLogJSONBodyBase64(hjs, p->flow, pa->tx_id);
+                    break;
+                case ALPROTO_TLS:
+                    AlertJsonTls(p->flow, js);
+                    break;
+                case ALPROTO_SSH:
+                    AlertJsonSsh(p->flow, js);
+                    break;
+                case ALPROTO_SMTP:
+                    hjs = JsonSMTPAddMetadata(p->flow, pa->tx_id);
+                    if (hjs) {
+                        json_object_set_new(js, "smtp", hjs);
                     }
-                    json_object_set_new(js, "http", hjs);
-                }
-            }
 
-            /* tls alert */
-            if (proto == ALPROTO_TLS) {
-                AlertJsonTls(p->flow, js);
-            }
-
-            /* ssh alert */
-            if (proto == ALPROTO_SSH) {
-                AlertJsonSsh(p->flow, js);
-            }
-
-            /* smtp alert */
-            if (proto == ALPROTO_SMTP) {
-                hjs = JsonSMTPAddMetadata(p->flow, pa->tx_id);
-                if (hjs) {
-                    json_object_set_new(js, "smtp", hjs);
-                }
-
-                hjs = JsonEmailAddMetadata(p->flow, pa->tx_id);
-                if (hjs) {
-                    json_object_set_new(js, "email", hjs);
-                }
-            }
-
-#ifdef HAVE_RUST
-            if (proto == ALPROTO_NFS) {
-                hjs = JsonNFSAddMetadataRPC(p->flow, pa->tx_id);
-                if (hjs)
-                    json_object_set_new(js, "rpc", hjs);
-                hjs = JsonNFSAddMetadata(p->flow, pa->tx_id);
-                if (hjs)
-                    json_object_set_new(js, "nfs", hjs);
-            } else if (proto == ALPROTO_SMB) {
-                hjs = JsonSMBAddMetadata(p->flow, pa->tx_id);
-                if (hjs)
-                    json_object_set_new(js, "smb", hjs);
-            }
-#endif
-            if (proto == ALPROTO_FTPDATA) {
-                hjs = JsonFTPDataAddMetadata(p->flow);
-                if (hjs)
-                    json_object_set_new(js, "ftp-data", hjs);
-            }
-
-            /* dnp3 alert */
-            if (proto == ALPROTO_DNP3) {
-                AlertJsonDnp3(p->flow, pa->tx_id, js);
-            }
-
-            if (proto == ALPROTO_DNS) {
-                AlertJsonDns(p->flow, pa->tx_id, js);
+                    hjs = JsonEmailAddMetadata(p->flow, pa->tx_id);
+                    if (hjs) {
+                        json_object_set_new(js, "email", hjs);
+                    }
+                    break;
+                case ALPROTO_NFS:
+                    hjs = JsonNFSAddMetadataRPC(p->flow, pa->tx_id);
+                    if (hjs)
+                        json_object_set_new(js, "rpc", hjs);
+                    hjs = JsonNFSAddMetadata(p->flow, pa->tx_id);
+                    if (hjs)
+                        json_object_set_new(js, "nfs", hjs);
+                    break;
+                case ALPROTO_SMB:
+                    hjs = JsonSMBAddMetadata(p->flow, pa->tx_id);
+                    if (hjs)
+                        json_object_set_new(js, "smb", hjs);
+                    break;
+                case ALPROTO_SIP:
+                    hjs = JsonSIPAddMetadata(p->flow, pa->tx_id);
+                    if (hjs)
+                        json_object_set_new(js, "sip", hjs);
+                    break;
+                case ALPROTO_RFB:
+                    hjs = JsonRFBAddMetadata(p->flow, pa->tx_id);
+                    if (hjs)
+                        json_object_set_new(js, "rfb", hjs);
+                    break;
+                case ALPROTO_FTPDATA:
+                    hjs = JsonFTPDataAddMetadata(p->flow);
+                    if (hjs)
+                        json_object_set_new(js, "ftp-data", hjs);
+                    break;
+                case ALPROTO_DNP3:
+                    AlertJsonDnp3(p->flow, pa->tx_id, js);
+                    break;
+                case ALPROTO_DNS:
+                    AlertJsonDns(p->flow, pa->tx_id, js);
+                    break;
+                default:
+                    break;
             }
         }
 
@@ -805,6 +807,7 @@ static void SetFlag(const ConfNode *conf, const char *name, uint16_t flag, uint1
 static void JsonAlertLogSetupMetadata(AlertJsonOutputCtx *json_output_ctx,
         ConfNode *conf)
 {
+    static bool warn_no_meta = false;
     uint32_t payload_buffer_size = JSON_STREAM_BUFFER_SIZE;
     uint16_t flags = METADATA_DEFAULTS;
 
@@ -860,6 +863,15 @@ static void JsonAlertLogSetupMetadata(AlertJsonOutputCtx *json_output_ctx,
                 exit(EXIT_FAILURE);
             } else {
                 payload_buffer_size = value;
+            }
+        }
+
+        if (!warn_no_meta && flags & JSON_BODY_LOGGING) {
+            if (((flags & LOG_JSON_APP_LAYER) == 0)) {
+                SCLogWarning(SC_WARN_ALERT_CONFIG, "HTTP body logging has been configured, however, "
+                             "metadata logging has not been enabled. HTTP body logging will be disabled.");
+                flags &= ~JSON_BODY_LOGGING;
+                warn_no_meta = true;
             }
         }
 
@@ -990,12 +1002,3 @@ void JsonAlertLogRegister (void)
         JsonAlertLogCondition, JsonAlertLogThreadInit, JsonAlertLogThreadDeinit,
         NULL);
 }
-
-#else
-
-void JsonAlertLogRegister (void)
-{
-}
-
-#endif
-

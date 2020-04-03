@@ -107,6 +107,8 @@ typedef struct AppLayerParserState_ AppLayerParserState;
 
 /* File flags */
 
+#define FLOWFILE_INIT                   0
+
 /** no magic on files in this flow */
 #define FLOWFILE_NO_MAGIC_TS            BIT_U16(0)
 #define FLOWFILE_NO_MAGIC_TC            BIT_U16(1)
@@ -130,6 +132,19 @@ typedef struct AppLayerParserState_ AppLayerParserState;
 #define FLOWFILE_NO_SIZE_TS             BIT_U16(10)
 #define FLOWFILE_NO_SIZE_TC             BIT_U16(11)
 
+#define FLOWFILE_NONE_TS (FLOWFILE_NO_MAGIC_TS | \
+                          FLOWFILE_NO_STORE_TS | \
+                          FLOWFILE_NO_MD5_TS   | \
+                          FLOWFILE_NO_SHA1_TS  | \
+                          FLOWFILE_NO_SHA256_TS| \
+                          FLOWFILE_NO_SIZE_TS)
+#define FLOWFILE_NONE_TC (FLOWFILE_NO_MAGIC_TC | \
+                          FLOWFILE_NO_STORE_TC | \
+                          FLOWFILE_NO_MD5_TC   | \
+                          FLOWFILE_NO_SHA1_TC  | \
+                          FLOWFILE_NO_SHA256_TC| \
+                          FLOWFILE_NO_SIZE_TC)
+#define FLOWFILE_NONE    (FLOWFILE_NONE_TS|FLOWFILE_NONE_TC)
 
 #define FLOW_IS_IPV4(f) \
     (((f)->flags & FLOW_IPV4) == FLOW_IPV4)
@@ -379,7 +394,6 @@ typedef struct Flow_
     uint32_t flags;         /**< generic flags */
 
     uint16_t file_flags;    /**< file tracking/extraction flags */
-    /* coccinelle: Flow:file_flags:FLOWFILE_ */
 
     /** destination port to be used in protocol detection. This is meant
      *  for use with STARTTLS and HTTP CONNECT detection */
@@ -423,7 +437,7 @@ typedef struct Flow_
     uint32_t de_ctx_version;
 
     /** Thread ID for the stream/detect portion of this flow */
-    FlowThreadId thread_id;
+    FlowThreadId thread_id[2];
 
     /** ttl tracking */
     uint8_t min_ttl_toserver;
@@ -468,7 +482,9 @@ enum FlowState {
     FLOW_STATE_ESTABLISHED,
     FLOW_STATE_CLOSED,
     FLOW_STATE_LOCAL_BYPASSED,
+#ifdef CAPTURE_OFFLOAD
     FLOW_STATE_CAPTURE_BYPASSED,
+#endif
 };
 
 typedef struct FlowProtoTimeout_ {
@@ -534,6 +550,8 @@ uint64_t FlowGetMemuse(void);
 
 int GetFlowBypassInfoID(void);
 void RegisterFlowBypassInfo(void);
+
+void FlowGetLastTimeAsParts(Flow *flow, uint64_t *secs, uint64_t *usecs);
 
 /** ----- Inline functions ----- */
 

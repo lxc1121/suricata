@@ -124,8 +124,7 @@ void ReceiveErfDagThreadExitStats(ThreadVars *, void *);
 TmEcode ReceiveErfDagThreadDeinit(ThreadVars *, void *);
 TmEcode DecodeErfDagThreadInit(ThreadVars *, void *, void **);
 TmEcode DecodeErfDagThreadDeinit(ThreadVars *tv, void *data);
-TmEcode DecodeErfDag(ThreadVars *, Packet *, void *, PacketQueue *,
-    PacketQueue *);
+TmEcode DecodeErfDag(ThreadVars *, Packet *, void *);
 void ReceiveErfDagCloseStream(int dagfd, int stream);
 
 /**
@@ -432,16 +431,17 @@ ProcessErfDagRecords(ErfDagThreadVars *ewtn, uint8_t *top, uint32_t *pkts_read)
 
         /* Only support ethernet at this time. */
         switch (hdr_type & 0x7f) {
-        case TYPE_PAD:
+        case ERF_TYPE_PAD:
+        case ERF_TYPE_META:
             /* Skip. */
             continue;
-        case TYPE_DSM_COLOR_ETH:
-        case TYPE_COLOR_ETH:
-        case TYPE_COLOR_HASH_ETH:
+        case ERF_TYPE_DSM_COLOR_ETH:
+        case ERF_TYPE_COLOR_ETH:
+        case ERF_TYPE_COLOR_HASH_ETH:
             /* In these types the color value overwrites the lctr
              * (drop count). */
             break;
-        case TYPE_ETH:
+        case ERF_TYPE_ETH:
             if (dr->lctr) {
                 StatsAddUI64(ewtn->tv, ewtn->drops, SCNtohs(dr->lctr));
             }
@@ -540,7 +540,6 @@ ProcessErfDagRecord(ErfDagThreadVars *ewtn, char *prec)
     ewtn->bytes += wlen;
 
     if (TmThreadsSlotProcessPkt(ewtn->tv, ewtn->slot, p) != TM_ECODE_OK) {
-        TmqhOutputPacketpool(ewtn->tv, p);
         SCReturnInt(TM_ECODE_FAILED);
     }
 
@@ -601,25 +600,20 @@ ReceiveErfDagCloseStream(int dagfd, int stream)
 /**
  * \brief   This function passes off to link type decoders.
  *
- * DecodeErfDag reads packets from the PacketQueue and passes
+ * DecodeErfDag decodes packets from DAG and passes
  * them off to the proper link type decoder.
  *
  * \param t pointer to ThreadVars
  * \param p pointer to the current packet
  * \param data pointer that gets cast into PcapThreadVars for ptv
- * \param pq pointer to the current PacketQueue
  */
 TmEcode
-DecodeErfDag(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq,
-    PacketQueue *postpq)
+DecodeErfDag(ThreadVars *tv, Packet *p, void *data)
 {
     SCEnter();
     DecodeThreadVars *dtv = (DecodeThreadVars *)data;
 
-    /* XXX HACK: flow timeout can call us for injected pseudo packets
-     *           see bug: https://redmine.openinfosecfoundation.org/issues/1107 */
-    if (p->flags & PKT_PSEUDO_STREAM_END)
-        return TM_ECODE_OK;
+    BUG_ON(PKT_IS_PSEUDOPKT(p));
 
     /* update counters */
     DecodeUpdatePacketCounters(tv, dtv, p);
@@ -627,7 +621,7 @@ DecodeErfDag(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq,
         /* call the decoder */
     switch(p->datalink) {
         case LINKTYPE_ETHERNET:
-            DecodeEthernet(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
+            DecodeEthernet(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p));
             break;
         default:
             SCLogError(SC_ERR_DATALINK_UNIMPLEMENTED,

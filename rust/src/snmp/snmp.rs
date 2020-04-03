@@ -1,4 +1,4 @@
-/* Copyright (C) 2017-2019 Open Information Security Foundation
+/* Copyright (C) 2017-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -17,21 +17,22 @@
 
 // written by Pierre Chifflier  <chifflier@wzdftpd.net>
 
-use snmp::snmp_parser::*;
-use core;
-use core::{AppProto,Flow,ALPROTO_UNKNOWN,ALPROTO_FAILED,STREAM_TOSERVER,STREAM_TOCLIENT};
-use applayer;
-use parser::*;
+use crate::snmp::snmp_parser::*;
+use crate::core;
+use crate::core::{AppProto,Flow,ALPROTO_UNKNOWN,ALPROTO_FAILED,STREAM_TOSERVER,STREAM_TOCLIENT};
+use crate::applayer::{self, *};
 use std;
 use std::ffi::{CStr,CString};
 use std::mem::transmute;
 
-use log::*;
+use crate::log::*;
 
-use der_parser::{DerObjectContent,parse_der_sequence};
+use der_parser::ber::BerObjectContent;
+use der_parser::der::parse_der_sequence;
 use der_parser::oid::Oid;
 use nom;
-use nom::{ErrorKind,IResult};
+use nom::IResult;
+use nom::error::ErrorKind;
 
 #[repr(u32)]
 pub enum SNMPEvent {
@@ -97,6 +98,7 @@ pub struct SNMPTransaction {
     events: *mut core::AppLayerDecoderEvents,
 
     logged: applayer::LoggerFlags,
+    detect_flags: applayer::TxDetectFlags,
 }
 
 
@@ -183,7 +185,7 @@ impl SNMPState {
 
     /// Parse an SNMP request message
     ///
-    /// Returns The number of messages parsed, or -1 on error
+    /// Returns 0 if successful, or -1 on error
     fn parse(&mut self, i: &[u8], direction: u8) -> i32 {
         if self.version == 0 {
             match parse_pdu_enveloppe_version(i) {
@@ -274,6 +276,7 @@ impl SNMPTransaction {
             de_state: None,
             events: std::ptr::null_mut(),
             logged: applayer::LoggerFlags::new(),
+            detect_flags: applayer::TxDetectFlags::default(),
         }
     }
 
@@ -319,10 +322,10 @@ pub extern "C" fn rs_snmp_parse_request(_flow: *const core::Flow,
                                        input: *const u8,
                                        input_len: u32,
                                        _data: *const std::os::raw::c_void,
-                                       _flags: u8) -> i32 {
+                                       _flags: u8) -> AppLayerResult {
     let buf = build_slice!(input,input_len as usize);
     let state = cast_pointer!(state,SNMPState);
-    state.parse(buf, STREAM_TOSERVER)
+    state.parse(buf, STREAM_TOSERVER).into()
 }
 
 #[no_mangle]
@@ -332,10 +335,10 @@ pub extern "C" fn rs_snmp_parse_response(_flow: *const core::Flow,
                                        input: *const u8,
                                        input_len: u32,
                                        _data: *const std::os::raw::c_void,
-                                       _flags: u8) -> i32 {
+                                       _flags: u8) -> AppLayerResult {
     let buf = build_slice!(input,input_len as usize);
     let state = cast_pointer!(state,SNMPState);
-    state.parse(buf, STREAM_TOCLIENT)
+    state.parse(buf, STREAM_TOCLIENT).into()
 }
 
 #[no_mangle]
@@ -535,7 +538,7 @@ fn parse_pdu_enveloppe_version(i:&[u8]) -> IResult<&[u8],u32> {
     match parse_der_sequence(i) {
         Ok((_,x))     => {
             match x.content {
-                DerObjectContent::Sequence(ref v) => {
+                BerObjectContent::Sequence(ref v) => {
                     if v.len() == 3 {
                         match v[0].as_u32()  {
                             Ok(0) => { return Ok((i,1)); }, // possibly SNMPv1
@@ -572,6 +575,9 @@ pub extern "C" fn rs_snmp_probing_parser(_flow: *const Flow,
     }
 }
 
+export_tx_detect_flags_set!(rs_snmp_set_tx_detect_flags, SNMPTransaction);
+export_tx_detect_flags_get!(rs_snmp_get_tx_detect_flags, SNMPTransaction);
+
 const PARSER_NAME : &'static [u8] = b"snmp\0";
 
 #[no_mangle]
@@ -581,8 +587,8 @@ pub unsafe extern "C" fn rs_register_snmp_parser() {
         name               : PARSER_NAME.as_ptr() as *const std::os::raw::c_char,
         default_port       : default_port.as_ptr(),
         ipproto            : core::IPPROTO_UDP,
-        probe_ts           : rs_snmp_probing_parser,
-        probe_tc           : rs_snmp_probing_parser,
+        probe_ts           : Some(rs_snmp_probing_parser),
+        probe_tc           : Some(rs_snmp_probing_parser),
         min_depth          : 0,
         max_depth          : 16,
         state_new          : rs_snmp_state_new,
@@ -607,6 +613,8 @@ pub unsafe extern "C" fn rs_register_snmp_parser() {
         set_tx_mpm_id      : None,
         get_files          : None,
         get_tx_iterator    : None,
+        get_tx_detect_flags: Some(rs_snmp_get_tx_detect_flags),
+        set_tx_detect_flags: Some(rs_snmp_set_tx_detect_flags),
     };
     let ip_proto_str = CString::new("udp").unwrap();
     if AppLayerProtoDetectConfProtoDetectionEnabled(ip_proto_str.as_ptr(), parser.name) != 0 {

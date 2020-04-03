@@ -6,24 +6,24 @@ noinst_HEADERS = action-globals.h \
 	suricata-common.h threadvars.h tree.h \
     util-validate.h
 bin_PROGRAMS = suricata
+if BUILD_FUZZTARGETS
+    bin_PROGRAMS += fuzz_applayerprotodetectgetproto \
+    fuzz_applayerparserparse fuzz_siginit \
+    fuzz_confyamlloadstring fuzz_decodepcapfile \
+    fuzz_sigpcap fuzz_mimedecparseline
+endif
 
-suricata_SOURCES = \
+COMMON_SOURCES = \
 alert-debuglog.c alert-debuglog.h \
 alert-fastlog.c alert-fastlog.h \
 alert-prelude.c alert-prelude.h \
 alert-syslog.c alert-syslog.h \
-alert-unified2-alert.c alert-unified2-alert.h \
 app-layer.c app-layer.h \
 app-layer-dcerpc.c app-layer-dcerpc.h \
 app-layer-dcerpc-udp.c app-layer-dcerpc-udp.h \
 app-layer-detect-proto.c app-layer-detect-proto.h \
 app-layer-dnp3.c app-layer-dnp3.h \
 app-layer-dnp3-objects.c app-layer-dnp3-objects.h \
-app-layer-dns-common.c app-layer-dns-common.h \
-app-layer-dns-tcp.c app-layer-dns-tcp.h \
-app-layer-dns-tcp-rust.c app-layer-dns-tcp-rust.h \
-app-layer-dns-udp.c app-layer-dns-udp.h \
-app-layer-dns-udp-rust.c app-layer-dns-udp-rust.h \
 app-layer-enip.c app-layer-enip.h \
 app-layer-enip-common.c app-layer-enip-common.h \
 app-layer-events.c app-layer-events.h \
@@ -48,16 +48,21 @@ app-layer-register.c app-layer-register.h \
 app-layer-tftp.c app-layer-tftp.h \
 app-layer-ikev2.c app-layer-ikev2.h \
 app-layer-krb5.c app-layer-krb5.h \
-app-layer-dhcp.c app-layer-dhcp.h \
+app-layer-rfb.c app-layer-rfb.h \
 app-layer-template.c app-layer-template.h \
 app-layer-template-rust.c app-layer-template-rust.h \
+app-layer-rdp.c app-layer-rdp.h \
 app-layer-ssh.c app-layer-ssh.h \
 app-layer-ssl.c app-layer-ssl.h \
+app-layer-sip.c app-layer-sip.h \
 conf.c conf.h \
 conf-yaml-loader.c conf-yaml-loader.h \
 counters.c counters.h \
+datasets.c datasets.h datasets-reputation.h \
+datasets-string.c datasets-string.h \
+datasets-sha256.c datasets-sha256.h \
+datasets-md5.c datasets-md5.h \
 decode.c decode.h \
-decode-afl.c \
 decode-erspan.c decode-erspan.h \
 decode-ethernet.c decode-ethernet.h \
 decode-events.c decode-events.h \
@@ -98,6 +103,8 @@ detect.c detect.h \
 detect-classtype.c detect-classtype.h \
 detect-content.c detect-content.h \
 detect-csum.c detect-csum.h \
+detect-datarep.c detect-datarep.h \
+detect-dataset.c detect-dataset.h \
 detect-dce-iface.c detect-dce-iface.h \
 detect-dce-opnum.c detect-dce-opnum.h \
 detect-dce-stub-data.c detect-dce-stub-data.h \
@@ -105,6 +112,7 @@ detect-depth.c detect-depth.h \
 detect-detection-filter.c detect-detection-filter.h \
 detect-distance.c detect-distance.h \
 detect-dnp3.c detect-dnp3.h \
+detect-dns-opcode.c detect-dns-opcode.h \
 detect-dns-query.c detect-dns-query.h \
 detect-tls-ja3-hash.c detect-tls-ja3-hash.h \
 detect-tls-ja3-string.c detect-tls-ja3-string.h \
@@ -146,6 +154,7 @@ detect-engine-sigorder.c detect-engine-sigorder.h \
 detect-engine-state.c detect-engine-state.h \
 detect-engine-tag.c detect-engine-tag.h \
 detect-engine-threshold.c detect-engine-threshold.h \
+detect-engine-uint.c detect-engine-uint.h \
 detect-fast-pattern.c detect-fast-pattern.h \
 detect-file-data.c detect-file-data.h \
 detect-file-hash-common.c detect-file-hash-common.h \
@@ -196,6 +205,8 @@ detect-http-ua.c detect-http-ua.h \
 detect-http-uri.c detect-http-uri.h \
 detect-icmp-id.c detect-icmp-id.h \
 detect-icmp-seq.c detect-icmp-seq.h \
+detect-icmpv6hdr.c detect-icmpv6hdr.h \
+detect-icmpv6-mtu.c detect-icmpv6-mtu.h \
 detect-icode.c detect-icode.h \
 detect-id.c detect-id.h \
 detect-ipopts.c detect-ipopts.h \
@@ -236,6 +247,16 @@ detect-sid.c detect-sid.h \
 detect-snmp-community.c detect-snmp-community.h \
 detect-snmp-pdu_type.c detect-snmp-pdu_type.h \
 detect-snmp-version.c detect-snmp-version.h \
+detect-sip-method.c detect-sip-method.h \
+detect-sip-uri.c detect-sip-uri.h \
+detect-sip-protocol.c detect-sip-protocol.h \
+detect-sip-stat-code.c detect-sip-stat-code.h \
+detect-sip-stat-msg.c detect-sip-stat-msg.h \
+detect-sip-request-line.c detect-sip-request-line.h \
+detect-sip-response-line.c detect-sip-response-line.h \
+detect-rfb-secresult.c detect-rfb-secresult.h \
+detect-rfb-sectype.c detect-rfb-sectype.h \
+detect-rfb-name.c detect-rfb-name.h \
 detect-ssh-proto.c detect-ssh-proto.h \
 detect-ssh-proto-version.c detect-ssh-proto-version.h \
 detect-ssh-software.c detect-ssh-software.h \
@@ -268,6 +289,7 @@ detect-transform-strip-whitespace.c detect-transform-strip-whitespace.h \
 detect-transform-md5.c detect-transform-md5.h \
 detect-transform-sha1.c detect-transform-sha1.h \
 detect-transform-sha256.c detect-transform-sha256.h \
+detect-transform-dotprefix.c detect-transform-dotprefix.h \
 detect-ttl.c detect-ttl.h \
 detect-uricontent.c detect-uricontent.h \
 detect-urilen.c detect-urilen.h \
@@ -276,6 +298,7 @@ detect-modbus.c detect-modbus.h \
 detect-xbits.c detect-xbits.h \
 detect-cipservice.c detect-cipservice.h \
 device-storage.c device-storage.h \
+feature.c feature.h \
 flow-bit.c flow-bit.h \
 flow.c flow.h \
 flow-bypass.c flow-bypass.h \
@@ -323,6 +346,7 @@ output-json-flow.c output-json-flow.h \
 output-json-ftp.c output-json-ftp.h \
 output-json-netflow.c output-json-netflow.h \
 output-json-http.c output-json-http.h \
+output-json-sip.c output-json-sip.h \
 output-json-smtp.c output-json-smtp.h \
 output-json-ssh.c output-json-ssh.h \
 output-json-stats.c output-json-stats.h \
@@ -334,8 +358,10 @@ output-json-ikev2.c output-json-ikev2.h \
 output-json-krb5.c output-json-krb5.h \
 output-json-dhcp.c output-json-dhcp.h \
 output-json-snmp.c output-json-snmp.h \
+output-json-rfb.c output-json-rfb.h \
 output-json-template.c output-json-template.h \
 output-json-template-rust.c output-json-template-rust.h \
+output-json-rdp.c output-json-rdp.h \
 output-json-metadata.c output-json-metadata.h \
 output-lua.c output-lua.h \
 output-packet.c output-packet.h \
@@ -365,6 +391,7 @@ runmode-unix-socket.c runmode-unix-socket.h \
 runmode-windivert.c runmode-windivert.h \
 runmodes.c runmodes.h \
 rust.h \
+rust-context.h \
 source-af-packet.c source-af-packet.h \
 source-erf-dag.c source-erf-dag.h \
 source-erf-file.c source-erf-file.h \
@@ -391,7 +418,6 @@ threads.c threads.h \
 threads-debug.h threads-profile.h \
 tm-modules.c tm-modules.h \
 tmqh-flow.c tmqh-flow.h \
-tmqh-nfq.c tmqh-nfq.h \
 tmqh-packetpool.c tmqh-packetpool.h \
 tmqh-simple.c tmqh-simple.h \
 tm-queuehandlers.c tm-queuehandlers.h \
@@ -417,8 +443,6 @@ util-daemon.c util-daemon.h \
 util-debug.c util-debug.h \
 util-debug-filters.c util-debug-filters.h \
 util-decode-asn1.c util-decode-asn1.h \
-util-decode-der.c util-decode-der.h \
-util-decode-der-get.c util-decode-der-get.h \
 util-decode-mime.c util-decode-mime.h \
 util-detect.c util-detect.h \
 util-device.c util-device.h \
@@ -501,6 +525,7 @@ util-strlcatu.c \
 util-strlcpyu.c \
 util-strptime.c \
 util-syslog.c util-syslog.h \
+util-thash.c util-thash.h \
 util-threshold-config.c util-threshold-config.h \
 util-time.c util-time.h \
 util-unittest.c util-unittest.h \
@@ -519,12 +544,90 @@ EXTRA_DIST = tests
 # set the include path found by configure
 AM_CPPFLAGS = $(all_includes)
 
+suricata_SOURCES = main.c $(COMMON_SOURCES)
+
 # the library search path.
 suricata_LDFLAGS = $(all_libraries) ${SECLDFLAGS}
 suricata_LDADD = $(HTP_LDADD) $(RUST_LDADD)
-
-if HAVE_RUST
 suricata_DEPENDENCIES = $(RUST_SURICATA_LIB)
+
+if BUILD_FUZZTARGETS
+nodist_fuzz_applayerprotodetectgetproto_SOURCES = tests/fuzz/fuzz_applayerprotodetectgetproto.c $(COMMON_SOURCES)
+fuzz_applayerprotodetectgetproto_LDFLAGS = $(all_libraries) ${SECLDFLAGS}
+fuzz_applayerprotodetectgetproto_LDADD = $(RUST_SURICATA_LIB) $(HTP_LDADD) $(RUST_LDADD)
+if HAS_FUZZLDFLAGS
+    fuzz_applayerprotodetectgetproto_LDFLAGS += $(LIB_FUZZING_ENGINE)
+else
+    nodist_fuzz_applayerprotodetectgetproto_SOURCES += tests/fuzz/onefile.c
+endif
+# force usage of CXX for linker
+nodist_EXTRA_fuzz_applayerprotodetectgetproto_SOURCES = force-cxx-linking.cxx
+
+nodist_fuzz_applayerparserparse_SOURCES = tests/fuzz/fuzz_applayerparserparse.c $(COMMON_SOURCES)
+fuzz_applayerparserparse_LDFLAGS = $(all_libraries) ${SECLDFLAGS}
+fuzz_applayerparserparse_LDADD = $(RUST_SURICATA_LIB) $(HTP_LDADD) $(RUST_LDADD)
+if HAS_FUZZLDFLAGS
+    fuzz_applayerparserparse_LDFLAGS += $(LIB_FUZZING_ENGINE)
+else
+    nodist_fuzz_applayerparserparse_SOURCES += tests/fuzz/onefile.c
+endif
+# force usage of CXX for linker
+nodist_EXTRA_fuzz_applayerparserparse_SOURCES = force-cxx-linking.cxx
+
+nodist_fuzz_siginit_SOURCES = tests/fuzz/fuzz_siginit.c $(COMMON_SOURCES)
+fuzz_siginit_LDFLAGS = $(all_libraries) ${SECLDFLAGS}
+fuzz_siginit_LDADD = $(RUST_SURICATA_LIB) $(HTP_LDADD) $(RUST_LDADD)
+if HAS_FUZZLDFLAGS
+    fuzz_siginit_LDFLAGS += $(LIB_FUZZING_ENGINE)
+else
+    nodist_fuzz_siginit_SOURCES += tests/fuzz/onefile.c
+endif
+# force usage of CXX for linker
+nodist_EXTRA_fuzz_siginit_SOURCES = force-cxx-linking.cxx
+
+nodist_fuzz_confyamlloadstring_SOURCES = tests/fuzz/fuzz_confyamlloadstring.c $(COMMON_SOURCES)
+fuzz_confyamlloadstring_LDFLAGS = $(all_libraries) ${SECLDFLAGS}
+fuzz_confyamlloadstring_LDADD = $(RUST_SURICATA_LIB) $(HTP_LDADD) $(RUST_LDADD)
+if HAS_FUZZLDFLAGS
+    fuzz_confyamlloadstring_LDFLAGS += $(LIB_FUZZING_ENGINE)
+else
+    nodist_fuzz_confyamlloadstring_SOURCES += tests/fuzz/onefile.c
+endif
+# force usage of CXX for linker
+nodist_EXTRA_fuzz_confyamlloadstring_SOURCES = force-cxx-linking.cxx
+
+nodist_fuzz_decodepcapfile_SOURCES = tests/fuzz/fuzz_decodepcapfile.c $(COMMON_SOURCES)
+fuzz_decodepcapfile_LDFLAGS = $(all_libraries) ${SECLDFLAGS}
+fuzz_decodepcapfile_LDADD = $(RUST_SURICATA_LIB) $(HTP_LDADD) $(RUST_LDADD)
+if HAS_FUZZLDFLAGS
+    fuzz_decodepcapfile_LDFLAGS += $(LIB_FUZZING_ENGINE)
+else
+    nodist_fuzz_decodepcapfile_SOURCES += tests/fuzz/onefile.c
+endif
+# force usage of CXX for linker
+nodist_EXTRA_fuzz_decodepcapfile_SOURCES = force-cxx-linking.cxx
+
+nodist_fuzz_sigpcap_SOURCES = tests/fuzz/fuzz_sigpcap.c $(COMMON_SOURCES)
+fuzz_sigpcap_LDFLAGS = $(all_libraries) ${SECLDFLAGS}
+fuzz_sigpcap_LDADD = $(RUST_SURICATA_LIB) $(HTP_LDADD) $(RUST_LDADD)
+if HAS_FUZZLDFLAGS
+    fuzz_sigpcap_LDFLAGS += $(LIB_FUZZING_ENGINE)
+else
+    nodist_fuzz_sigpcap_SOURCES += tests/fuzz/onefile.c
+endif
+# force usage of CXX for linker
+nodist_EXTRA_fuzz_sigpcap_SOURCES = force-cxx-linking.cxx
+
+nodist_fuzz_mimedecparseline_SOURCES = tests/fuzz/fuzz_mimedecparseline.c $(COMMON_SOURCES)
+fuzz_mimedecparseline_LDFLAGS = $(all_libraries) ${SECLDFLAGS}
+fuzz_mimedecparseline_LDADD = $(RUST_SURICATA_LIB) $(HTP_LDADD) $(RUST_LDADD)
+if HAS_FUZZLDFLAGS
+    fuzz_mimedecparseline_LDFLAGS += $(LIB_FUZZING_ENGINE)
+else
+    nodist_fuzz_mimedecparseline_SOURCES += tests/fuzz/onefile.c
+endif
+# force usage of CXX for linker
+nodist_EXTRA_fuzz_mimedecparseline_SOURCES = force-cxx-linking.cxx
 endif
 
 # default CFLAGS

@@ -77,7 +77,6 @@ class SuricataCompleter:
             return next(self.generator)
         except StopIteration:
             return None
-        return None
 
 
 class SuricataSC:
@@ -106,6 +105,7 @@ class SuricataSC:
                 "list-hostbit",
                 "memcap-set",
                 "memcap-show",
+                "dataset-add",
                 ]
         self.cmd_list = self.basic_commands + self.fn_commands
         self.sck_path = sck_path
@@ -156,7 +156,7 @@ class SuricataSC:
 
     def connect(self):
         try:
-            if self.socket == None:
+            if self.socket is None:
                 self.socket = socket(AF_UNIX)
             self.socket.connect(self.sck_path)
         except error as err:

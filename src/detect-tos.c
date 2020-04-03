@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -45,8 +45,7 @@
 
 #define PARSE_REGEX  "^\\s*(!?\\s*[0-9]{1,3}|!?\\s*[xX][0-9a-fA-F]{1,2})\\s*$"
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 static int DetectTosSetup(DetectEngineCtx *, Signature *, const char *);
 static int DetectTosMatch(DetectEngineThreadCtx *, Packet *,
@@ -63,6 +62,7 @@ static void DetectTosFree(void *);
 void DetectTosRegister(void)
 {
     sigmatch_table[DETECT_TOS].name = "tos";
+    sigmatch_table[DETECT_TOS].desc = "match on specific decimal values of the IP header TOS field";
     sigmatch_table[DETECT_TOS].Match = DetectTosMatch;
     sigmatch_table[DETECT_TOS].Setup = DetectTosSetup;
     sigmatch_table[DETECT_TOS].Free = DetectTosFree;
@@ -72,7 +72,7 @@ void DetectTosRegister(void)
     sigmatch_table[DETECT_TOS].url =
         DOC_URL DOC_VERSION "/rules/header-keywords.html#tos";
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
 /**
@@ -107,13 +107,10 @@ static int DetectTosMatch(DetectEngineThreadCtx *det_ctx, Packet *p,
 static DetectTosData *DetectTosParse(const char *arg, bool negate)
 {
     DetectTosData *tosd = NULL;
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
 
-    ret = pcre_exec(parse_regex, parse_regex_study, arg, strlen(arg), 0, 0,
-                    ov, MAX_SUBSTRINGS);
-
+    ret = DetectParsePcreExec(&parse_regex, arg, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret != 2) {
         SCLogError(SC_ERR_PCRE_MATCH, "invalid tos option - %s. "
                    "The tos option value must be in the range "
@@ -133,13 +130,11 @@ static DetectTosData *DetectTosParse(const char *arg, bool negate)
     int64_t tos = 0;
 
     if (tosbytes_str[0] == 'x' || tosbytes_str[0] == 'X') {
-        int r = ByteExtractStringSigned(&tos, 16, 0, &tosbytes_str[1]);
-        if (r < 0) {
+        if (StringParseInt64(&tos, 16, 0, &tosbytes_str[1]) < 0) {
             goto error;
         }
     } else {
-        int r = ByteExtractStringSigned(&tos, 10, 0, &tosbytes_str[0]);
-        if (r < 0) {
+        if (StringParseInt64(&tos, 10, 0, &tosbytes_str[0]) < 0) {
             goto error;
         }
     }

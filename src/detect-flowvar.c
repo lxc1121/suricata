@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2014 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -42,8 +42,7 @@
 #include "util-print.h"
 
 #define PARSE_REGEX         "(.*),(.*)"
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 int DetectFlowvarMatch (DetectEngineThreadCtx *, Packet *,
         const Signature *, const SigMatchCtx *);
@@ -67,7 +66,7 @@ void DetectFlowvarRegister (void)
     sigmatch_table[DETECT_FLOWVAR_POSTMATCH].Free  = DetectFlowvarDataFree;
     sigmatch_table[DETECT_FLOWVAR_POSTMATCH].RegisterTests  = NULL;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
 /**
@@ -118,44 +117,42 @@ static int DetectFlowvarSetup (DetectEngineCtx *de_ctx, Signature *s, const char
 {
     DetectFlowvarData *fd = NULL;
     SigMatch *sm = NULL;
-    char *varname = NULL, *varcontent = NULL;
+    char varname[64], varcontent[64];
 #define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
-    const char *str_ptr;
     uint8_t *content = NULL;
     uint16_t contentlen = 0;
     uint32_t contentflags = s->init_data->negated ? DETECT_CONTENT_NEGATED : 0;
 
-    ret = pcre_exec(parse_regex, parse_regex_study, rawstr, strlen(rawstr), 0, 0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, rawstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret != 3) {
         SCLogError(SC_ERR_PCRE_MATCH, "\"%s\" is not a valid setting for flowvar.", rawstr);
         return -1;
     }
 
-    res = pcre_get_substring((char *)rawstr, ov, MAX_SUBSTRINGS, 1, &str_ptr);
+    res = pcre_copy_substring((char *)rawstr, ov, MAX_SUBSTRINGS, 1, varname, sizeof(varname));
     if (res < 0) {
-        SCLogError(SC_ERR_PCRE_GET_SUBSTRING, "pcre_get_substring failed");
+        SCLogError(SC_ERR_PCRE_COPY_SUBSTRING, "pcre_copy_substring failed");
         return -1;
     }
-    varname = (char *)str_ptr;
 
-    res = pcre_get_substring((char *)rawstr, ov, MAX_SUBSTRINGS, 2, &str_ptr);
+    res = pcre_copy_substring((char *)rawstr, ov, MAX_SUBSTRINGS, 2, varcontent, sizeof(varcontent));
     if (res < 0) {
-        SCLogError(SC_ERR_PCRE_GET_SUBSTRING, "pcre_get_substring failed");
+        SCLogError(SC_ERR_PCRE_COPY_SUBSTRING, "pcre_copy_substring failed");
         return -1;
     }
-    varcontent = (char *)str_ptr;
 
+    int varcontent_index = 0;
     if (strlen(varcontent) >= 2) {
         if (varcontent[0] == '"')
-            varcontent++;
+            varcontent_index++;
         if (varcontent[strlen(varcontent)-1] == '"')
             varcontent[strlen(varcontent)-1] = '\0';
     }
-    SCLogDebug("varcontent %s", varcontent);
+    SCLogDebug("varcontent %s", &varcontent[varcontent_index]);
 
-    res = DetectContentDataParse("flowvar", varcontent, &content, &contentlen);
+    res = DetectContentDataParse("flowvar", &varcontent[varcontent_index], &content, &contentlen);
     if (res == -1)
         goto error;
 

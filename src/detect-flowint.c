@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2014 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -50,8 +50,7 @@
 #define PARSE_REGEX "^\\s*([a-zA-Z][\\w\\d_./]+)\\s*,\\s*([+=-]{1}|==|!=|<|<=|>|>=|isset|notset)\\s*,?\\s*([a-zA-Z][\\w\\d]+|[\\d]{1,10})?\\s*$"
 /* Varnames must begin with a letter */
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 int DetectFlowintMatch(DetectEngineThreadCtx *, Packet *,
                        const Signature *, const SigMatchCtx *);
@@ -69,7 +68,7 @@ void DetectFlowintRegister(void)
     sigmatch_table[DETECT_FLOWINT].Free = DetectFlowintFree;
     sigmatch_table[DETECT_FLOWINT].RegisterTests = DetectFlowintRegisterTests;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
 /**
@@ -227,15 +226,13 @@ static DetectFlowintData *DetectFlowintParse(DetectEngineCtx *de_ctx, const char
     char *varname = NULL;
     char *varval = NULL;
     char *modstr = NULL;
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
     uint8_t modifier = FLOWINT_MODIFIER_UNKNOWN;
     unsigned long long value_long = 0;
     const char *str_ptr;
 
-    ret = pcre_exec(parse_regex, parse_regex_study, rawstr, strlen(rawstr),
-                     0, 0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, rawstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret < 3 || ret > 4) {
         SCLogError(SC_ERR_PCRE_MATCH, "\"%s\" is not a valid setting for flowint(ret = %d).", rawstr, ret);
         return NULL;
@@ -436,7 +433,7 @@ static void DetectFlowintPrintData(DetectFlowintData *sfd)
         return;
     }
 
-    SCLogDebug("Varname: %s, modifier: %"PRIu8", idx: %"PRIu16" Target: ",
+    SCLogDebug("Varname: %s, modifier: %"PRIu8", idx: %"PRIu32" Target: ",
                 sfd->name, sfd->modifier, sfd->idx);
     switch(sfd->targettype) {
         case FLOWINT_TARGET_VAR:

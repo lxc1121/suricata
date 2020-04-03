@@ -45,6 +45,8 @@
 #include "detect-lua.h"
 #include "detect-base64-decode.h"
 #include "detect-base64-data.h"
+#include "detect-dataset.h"
+#include "detect-datarep.h"
 
 #include "app-layer-dcerpc.h"
 
@@ -101,7 +103,7 @@
 int DetectEngineContentInspection(DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx,
                                   const Signature *s, const SigMatchData *smd,
                                   Packet *p, Flow *f,
-                                  uint8_t *buffer, uint32_t buffer_len,
+                                  const uint8_t *buffer, uint32_t buffer_len,
                                   uint32_t stream_start_offset, uint8_t flags,
                                   uint8_t inspection_mode)
 {
@@ -141,7 +143,7 @@ int DetectEngineContentInspection(DetectEngineCtx *de_ctx, DetectEngineThreadCtx
 
         /* search for our pattern, checking the matches recursively.
          * if we match we look for the next SigMatch as well */
-        uint8_t *found = NULL;
+        const uint8_t *found = NULL;
         uint32_t offset = 0;
         uint32_t depth = buffer_len;
         uint32_t prev_offset = 0; /**< used in recursive searching */
@@ -245,8 +247,15 @@ int DetectEngineContentInspection(DetectEngineCtx *de_ctx, DetectEngineThreadCtx
                 prev_buffer_offset = 0;
             }
 
+            /* If the value came from a variable, make sure to adjust the depth so it's relative
+             * to the offset value.
+             */
+            if (cd->flags & (DETECT_CONTENT_DISTANCE_BE|DETECT_CONTENT_OFFSET_BE|DETECT_CONTENT_DEPTH_BE)) {
+                 depth += offset;
+            }
+
             /* update offset with prev_offset if we're searching for
-             * matches after the first occurence. */
+             * matches after the first occurrence. */
             SCLogDebug("offset %"PRIu32", prev_offset %"PRIu32, offset, prev_offset);
             if (prev_offset != 0)
                 offset = prev_offset;
@@ -266,7 +275,7 @@ int DetectEngineContentInspection(DetectEngineCtx *de_ctx, DetectEngineThreadCtx
                 }
             }
 
-            uint8_t *sbuffer = buffer + offset;
+            const uint8_t *sbuffer = buffer + offset;
             uint32_t sbuffer_len = depth - offset;
             uint32_t match_offset = 0;
             SCLogDebug("sbuffer_len %"PRIu32, sbuffer_len);
@@ -313,8 +322,9 @@ int DetectEngineContentInspection(DetectEngineCtx *de_ctx, DetectEngineThreadCtx
                     /* Match branch, add replace to the list if needed */
                     if (cd->flags & DETECT_CONTENT_REPLACE) {
                         if (inspection_mode == DETECT_ENGINE_CONTENT_INSPECTION_MODE_PAYLOAD) {
-                            /* we will need to replace content if match is confirmed */
-                            det_ctx->replist = DetectReplaceAddToList(det_ctx->replist, found, cd);
+                            /* we will need to replace content if match is confirmed
+                             * cast to non-const as replace writes to it. */
+                            det_ctx->replist = DetectReplaceAddToList(det_ctx->replist, (uint8_t *)found, cd);
                         } else {
                             SCLogWarning(SC_ERR_INVALID_VALUE, "Can't modify payload without packet");
                         }
@@ -329,7 +339,7 @@ int DetectEngineContentInspection(DetectEngineCtx *de_ctx, DetectEngineThreadCtx
                     KEYWORD_PROFILING_END(det_ctx, smd->type, 1);
 
                     /* see if the next buffer keywords match. If not, we will
-                     * search for another occurence of this content and see
+                     * search for another occurrence of this content and see
                      * if the others match then until we run out of matches */
                     int r = DetectEngineContentInspection(de_ctx, det_ctx, s, smd+1,
                             p, f, buffer, buffer_len, stream_start_offset, flags,
@@ -430,7 +440,7 @@ int DetectEngineContentInspection(DetectEngineCtx *de_ctx, DetectEngineThreadCtx
             prev_offset = det_ctx->pcre_match_start_offset;
 
             /* see if the next payload keywords match. If not, we will
-             * search for another occurence of this pcre and see
+             * search for another occurrence of this pcre and see
              * if the others match, until we run out of matches */
             r = DetectEngineContentInspection(de_ctx, det_ctx, s, smd+1,
                     p, f, buffer, buffer_len, stream_start_offset, flags,
@@ -538,6 +548,28 @@ int DetectEngineContentInspection(DetectEngineCtx *de_ctx, DetectEngineThreadCtx
             goto no_match;
         }
         goto match;
+
+    } else if (smd->type == DETECT_DATASET) {
+
+        //PrintRawDataFp(stdout, buffer, buffer_len);
+        const DetectDatasetData *sd = (const DetectDatasetData *) smd->ctx;
+        int r = DetectDatasetBufferMatch(det_ctx, sd, buffer, buffer_len); //TODO buffer offset?
+        if (r == 1) {
+            goto match;
+        }
+        det_ctx->discontinue_matching = 1;
+        goto no_match;
+
+    } else if (smd->type == DETECT_DATAREP) {
+
+        //PrintRawDataFp(stdout, buffer, buffer_len);
+        const DetectDatarepData *sd = (const DetectDatarepData *) smd->ctx;
+        int r = DetectDatarepBufferMatch(det_ctx, sd, buffer, buffer_len); //TODO buffer offset?
+        if (r == 1) {
+            goto match;
+        }
+        det_ctx->discontinue_matching = 1;
+        goto no_match;
 
     } else if (smd->type == DETECT_AL_URILEN) {
         SCLogDebug("inspecting uri len");

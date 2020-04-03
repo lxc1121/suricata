@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -48,8 +48,7 @@
  */
 #define PARSE_REGEX  "^([!<>]?)\\s*([^\\s]+)$"
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 static int DetectIPProtoSetup(DetectEngineCtx *, Signature *, const char *);
 static void DetectIPProtoRegisterTests(void);
@@ -66,7 +65,7 @@ void DetectIPProtoRegister(void)
     sigmatch_table[DETECT_IPPROTO].RegisterTests = DetectIPProtoRegisterTests;
     sigmatch_table[DETECT_IPPROTO].flags = SIGMATCH_QUOTES_OPTIONAL;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
 /**
@@ -81,15 +80,13 @@ static DetectIPProtoData *DetectIPProtoParse(const char *optstr)
 {
     DetectIPProtoData *data = NULL;
     char *args[2] = { NULL, NULL };
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
     int i;
     const char *str_ptr;
 
     /* Execute the regex and populate args with captures. */
-    ret = pcre_exec(parse_regex, parse_regex_study, optstr,
-                    strlen(optstr), 0, 0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, optstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret != 3) {
         SCLogError(SC_ERR_PCRE_MATCH, "pcre_exec parse error, ret"
                    "%" PRId32 ", string %s", ret, optstr);
@@ -129,7 +126,7 @@ static DetectIPProtoData *DetectIPProtoParse(const char *optstr)
         data->proto = (uint8_t)pent->p_proto;
     }
     else {
-        if (ByteExtractStringUint8(&data->proto, 10, 0, args[1]) <= 0) {
+        if (StringParseUint8(&data->proto, 10, 0, args[1]) <= 0) {
             SCLogError(SC_ERR_INVALID_VALUE, "Malformed protocol number: %s",
                        str_ptr);
             goto error;
@@ -1927,7 +1924,7 @@ static int DetectIPProtoTestSig2(void)
     memset(&th_v, 0, sizeof(th_v));
 
     FlowInitConfig(FLOW_QUIET);
-    DecodeEthernet(&th_v, &dtv, p, raw_eth, sizeof(raw_eth), NULL);
+    DecodeEthernet(&th_v, &dtv, p, raw_eth, sizeof(raw_eth));
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     if (de_ctx == NULL) {
@@ -2012,7 +2009,7 @@ static int DetectIPProtoTestSig3(void)
     memset(&th_v, 0, sizeof(th_v));
 
     FlowInitConfig(FLOW_QUIET);
-    DecodeEthernet(&th_v, &dtv, p, raw_eth, sizeof(raw_eth), NULL);
+    DecodeEthernet(&th_v, &dtv, p, raw_eth, sizeof(raw_eth));
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     if (de_ctx == NULL) {

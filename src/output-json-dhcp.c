@@ -15,12 +15,6 @@
  * 02110-1301, USA.
  */
 
-/*
- * TODO: Update \author in this file and in output-json-dhcp.h.
- * TODO: Remove SCLogNotice statements, or convert to debug.
- * TODO: Implement your app-layers logging.
- */
-
 /**
  * \file
  *
@@ -48,12 +42,9 @@
 #include "app-layer.h"
 #include "app-layer-parser.h"
 
-#include "app-layer-dhcp.h"
 #include "output-json-dhcp.h"
+#include "rust.h"
 
-#if defined(HAVE_LIBJANSSON) && defined(HAVE_RUST)
-
-#include "rust-dhcp-logger-gen.h"
 
 typedef struct LogDHCPFileCtx_ {
     LogFileCtx *file_ctx;
@@ -179,11 +170,3 @@ void JsonDHCPLogRegister(void)
         JsonDHCPLogger, JsonDHCPLogThreadInit,
         JsonDHCPLogThreadDeinit, NULL);
 }
-
-#else /* No JSON support. */
-
-void JsonDHCPLogRegister(void)
-{
-}
-
-#endif /* HAVE_LIBJANSSON */

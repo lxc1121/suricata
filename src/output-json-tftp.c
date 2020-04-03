@@ -48,12 +48,7 @@
 #include "app-layer-tftp.h"
 #include "output-json-tftp.h"
 
-#ifdef HAVE_RUST
-
 #include "rust.h"
-#include "rust-tftp-log-gen.h"
-
-#ifdef HAVE_LIBJANSSON
 
 typedef struct LogTFTPFileCtx_ {
     LogFileCtx *file_ctx;
@@ -179,18 +174,3 @@ void JsonTFTPLogRegister(void)
 
     SCLogDebug("TFTP JSON logger registered.");
 }
-#else /* HAVE_RUST */
-
-void JsonTFTPLogRegister(void)
-{
-}
-
-#endif /* HAVE_RUST */
-
-#else /* HAVE_LIBJANSSON */
-
-void JsonTFTPLogRegister(void)
-{
-}
-
-#endif /* HAVE_LIBJANSSON */

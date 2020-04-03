@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -40,8 +40,7 @@
 
 #define PARSE_REGEX "^\\s*(\"\\s*)?([0-9]+)(\\s*\")?\\s*$"
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 static int DetectIcmpSeqMatch(DetectEngineThreadCtx *, Packet *,
         const Signature *, const SigMatchCtx *);
@@ -49,7 +48,7 @@ static int DetectIcmpSeqSetup(DetectEngineCtx *, Signature *, const char *);
 void DetectIcmpSeqRegisterTests(void);
 void DetectIcmpSeqFree(void *);
 static int PrefilterSetupIcmpSeq(DetectEngineCtx *de_ctx, SigGroupHead *sgh);
-static _Bool PrefilterIcmpSeqIsPrefilterable(const Signature *s);
+static bool PrefilterIcmpSeqIsPrefilterable(const Signature *s);
 
 /**
  * \brief Registration function for icmp_seq
@@ -67,10 +66,10 @@ void DetectIcmpSeqRegister (void)
     sigmatch_table[DETECT_ICMP_SEQ].SupportsPrefilter = PrefilterIcmpSeqIsPrefilterable;
     sigmatch_table[DETECT_ICMP_SEQ].SetupPrefilter = PrefilterSetupIcmpSeq;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
-static inline _Bool GetIcmpSeq(Packet *p, uint16_t *seq)
+static inline bool GetIcmpSeq(Packet *p, uint16_t *seq)
 {
     uint16_t seqn;
 
@@ -159,13 +158,12 @@ static DetectIcmpSeqData *DetectIcmpSeqParse (const char *icmpseqstr)
 {
     DetectIcmpSeqData *iseq = NULL;
     char *substr[3] = {NULL, NULL, NULL};
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
     int i;
     const char *str_ptr;
 
-    ret = pcre_exec(parse_regex, parse_regex_study, icmpseqstr, strlen(icmpseqstr), 0, 0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, icmpseqstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret < 1 || ret > 4) {
         SCLogError(SC_ERR_PCRE_MATCH,"Parse error %s", icmpseqstr);
         goto error;
@@ -199,7 +197,7 @@ static DetectIcmpSeqData *DetectIcmpSeqParse (const char *icmpseqstr)
     }
 
     uint16_t seq = 0;
-    if (ByteExtractStringUint16(&seq, 10, 0, substr[1]) < 0) {
+    if (StringParseUint16(&seq, 10, 0, substr[1]) < 0) {
         SCLogError(SC_ERR_INVALID_ARGUMENT, "specified icmp seq %s is not "
                                         "valid", substr[1]);
         goto error;
@@ -293,7 +291,7 @@ PrefilterPacketIcmpSeqSet(PrefilterPacketHeaderValue *v, void *smctx)
     v->u16[0] = a->seq;
 }
 
-static _Bool
+static bool
 PrefilterPacketIcmpSeqCompare(PrefilterPacketHeaderValue v, void *smctx)
 {
     const DetectIcmpSeqData *a = smctx;
@@ -310,7 +308,7 @@ static int PrefilterSetupIcmpSeq(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
         PrefilterPacketIcmpSeqMatch);
 }
 
-static _Bool PrefilterIcmpSeqIsPrefilterable(const Signature *s)
+static bool PrefilterIcmpSeqIsPrefilterable(const Signature *s)
 {
     const SigMatch *sm;
     for (sm = s->init_data->smlists[DETECT_SM_LIST_MATCH] ; sm != NULL; sm = sm->next) {

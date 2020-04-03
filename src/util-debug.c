@@ -42,10 +42,8 @@
 
 #include "util-unittest.h"
 #include "util-syslog.h"
+#include "rust.h"
 
-#ifdef HAVE_RUST
-#include "rust-log-gen.h"
-#endif
 
 #include "conf.h"
 
@@ -202,8 +200,6 @@ static inline void SCLogPrintToSyslog(int syslog_log_level, const char *msg)
     return;
 }
 
-#ifdef HAVE_LIBJANSSON
-#include <jansson.h>
 /**
  */
 static int SCLogMessageJSON(struct timeval *tval, char *buffer, size_t buffer_size,
@@ -266,7 +262,6 @@ static int SCLogMessageJSON(struct timeval *tval, char *buffer, size_t buffer_si
 error:
     return -1;
 }
-#endif /* HAVE_LIBJANSSON */
 
 /**
  * \brief Adds the global log_format to the outgoing buffer
@@ -288,10 +283,8 @@ static SCError SCLogMessageGetBuffer(
                      const unsigned int line, const char *function,
                      const SCError error_code, const char *message)
 {
-#ifdef HAVE_LIBJANSSON
     if (type == SC_LOG_OP_TYPE_JSON)
         return SCLogMessageJSON(tval, buffer, buffer_size, log_level, file, line, function, error_code, message);
-#endif
 
     char *temp = buffer;
     const char *s = NULL;
@@ -324,7 +317,7 @@ static SCError SCLogMessageGetBuffer(
     char *temp_fmt = local_format;
     char *substr = temp_fmt;
 
-	while ( (temp_fmt = index(temp_fmt, SC_LOG_FMT_PREFIX)) ) {
+	while ( (temp_fmt = strchr(temp_fmt, SC_LOG_FMT_PREFIX)) ) {
         if ((temp - buffer) > SC_LOG_MAX_LOG_MSG_LEN) {
             return SC_OK;
         }
@@ -714,7 +707,7 @@ static inline SCLogOPIfaceCtx *SCLogInitFileOPIface(const char *file,
         exit(EXIT_FAILURE);
     }
 
-    if (file == NULL || log_format == NULL) {
+    if (file == NULL) {
         goto error;
     }
 
@@ -730,7 +723,7 @@ static inline SCLogOPIfaceCtx *SCLogInitFileOPIface(const char *file,
         goto error;
     }
 
-    if ((iface_ctx->log_format = SCStrdup(log_format)) == NULL) {
+    if (log_format != NULL && (iface_ctx->log_format = SCStrdup(log_format)) == NULL) {
         goto error;
     }
 
@@ -1286,10 +1279,7 @@ void SCLogInitLogModule(SCLogInitData *sc_lid)
 
     //SCOutputPrint(sc_did->startup_message);
 
-#ifdef HAVE_RUST
     rs_log_set_level(sc_log_global_log_level);
-#endif
-
     return;
 }
 
@@ -1298,6 +1288,14 @@ void SCLogLoadConfig(int daemon, int verbose)
     ConfNode *outputs;
     SCLogInitData *sc_lid;
     int have_logging = 0;
+    int max_level = 0;
+    SCLogLevel min_level = 0;
+
+    /* If verbose logging was requested, set the minimum as
+     * SC_LOG_NOTICE plus the extra verbosity. */
+    if (verbose) {
+        min_level = SC_LOG_NOTICE + verbose;
+    }
 
     outputs = ConfGetNode("logging.outputs");
     if (outputs == NULL) {
@@ -1314,24 +1312,17 @@ void SCLogLoadConfig(int daemon, int verbose)
     /* Get default log level and format. */
     const char *default_log_level_s = NULL;
     if (ConfGet("logging.default-log-level", &default_log_level_s) == 1) {
-        sc_lid->global_log_level =
+        SCLogLevel default_log_level =
             SCMapEnumNameToValue(default_log_level_s, sc_log_level_map);
-        if (sc_lid->global_log_level == -1) {
+        if (default_log_level == -1) {
             SCLogError(SC_ERR_INVALID_ARGUMENT, "Invalid default log level: %s",
                 default_log_level_s);
             exit(EXIT_FAILURE);
         }
+        sc_lid->global_log_level = MAX(min_level, default_log_level);
     }
     else {
-        SCLogWarning(SC_ERR_MISSING_CONFIG_PARAM,
-            "No default log level set, will use notice.");
-        sc_lid->global_log_level = SC_LOG_NOTICE;
-    }
-
-    if (verbose) {
-        sc_lid->global_log_level += verbose;
-        if (sc_lid->global_log_level > SC_LOG_LEVEL_MAX)
-            sc_lid->global_log_level = SC_LOG_LEVEL_MAX;
+        sc_lid->global_log_level = MAX(min_level, SC_LOG_NOTICE);
     }
 
     if (ConfGet("logging.default-log-format", &sc_lid->global_log_format) != 1)
@@ -1361,13 +1352,7 @@ void SCLogLoadConfig(int daemon, int verbose)
             if (strcmp(type_s, "regular") == 0)
                 type = SC_LOG_OP_TYPE_REGULAR;
             else if (strcmp(type_s, "json") == 0) {
-#ifdef HAVE_LIBJANSSON
                 type = SC_LOG_OP_TYPE_JSON;
-#else
-                SCLogError(SC_ERR_INVALID_ARGUMENT, "libjansson support not "
-                        "compiled in, can't use 'json' logging");
-                exit(EXIT_FAILURE);
-#endif /* HAVE_LIBJANSSON */
             }
         }
 
@@ -1385,7 +1370,11 @@ void SCLogLoadConfig(int daemon, int verbose)
                     level_s);
                 exit(EXIT_FAILURE);
             }
+            max_level = MAX(max_level, level);
         }
+
+        /* Increase the level of extra verbosity was requested. */
+        level = MAX(min_level, level);
 
         if (strcmp(output->name, "console") == 0) {
             op_iface_ctx = SCLogInitConsoleOPIface(format, level, type);
@@ -1442,6 +1431,8 @@ void SCLogLoadConfig(int daemon, int verbose)
                    " 'logging.outputs' in the YAML.");
     }
 
+    /* Set the global log level to that of the max level used. */
+    sc_lid->global_log_level = MAX(sc_lid->global_log_level, max_level);
     SCLogInitLogModule(sc_lid);
 
     SCLogDebug("sc_log_global_log_level: %d", sc_log_global_log_level);

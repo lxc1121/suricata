@@ -1,3 +1,5 @@
+.. _ebpf-xdp:
+
 eBPF and XDP
 ============
 
@@ -20,16 +22,22 @@ Bypass can be implemented in eBPF and XDP. The advantage of XDP is that the pack
 possible. So performance is better. But bypassed packets don't reach the network so you can't use this on regular
 traffic but only on duplicated/sniffed traffic.
 
+The bypass implementation relies on one of the most powerful concept of eBPF: maps. A map is a data structure
+shared between user space and kernel space/hardware. It allows user space and kernel space to interact, pass
+information. Maps are often implemented as arrays or hash tables that can contain arbitrary key, value pairs.
+
 XDP
 ~~~
 
-XDP provides another Linux native way of optimising Suricata's performance on sniffing high speed networks.
+XDP provides another Linux native way of optimising Suricata's performance on sniffing high speed networks:
 
-::
+   XDP or eXpress Data Path provides a high performance, programmable network data path in the Linux kernel as part of the IO Visor Project. XDP provides bare metal packet processing at the lowest point in the software stack which makes it ideal for speed without compromising programmability. Furthermore, new functions can be implemented dynamically with the integrated fast path without kernel modification.
 
- XDP or eXpress Data Path provides a high performance, programmable network data path in the Linux kernel as part of the IO Visor Project. XDP provides bare metal packet processing at the lowest point in the software stack which makes it ideal for speed without compromising programmability. Furthermore, new functions can be implemented dynamically with the integrated fast path without kernel modification.
+More info about XDP:
 
-`More info about XDP <https://www.iovisor.org/technology/xdp>`__
+- `IOVisor's XDP page <https://www.iovisor.org/technology/xdp>`__
+- `Cilium's BPF and XDP reference guide <https://docs.cilium.io/en/stable/bpf/>`__
+
 
 Requirements
 ------------
@@ -54,7 +62,8 @@ This guide has been confirmed on Debian/Ubuntu "LTS" Linux.
 Disable irqbalance
 ~~~~~~~~~~~~~~~~~~
 
-::
+Irqbalance may cause issues in most setups described here, so it is recommended
+to deactivate it ::
 
  systemctl stop irqbalance
  systemctl disable irqbalance
@@ -64,12 +73,17 @@ Kernel
 
 You need to run a kernel 4.13 or newer.
 
-Clang
-~~~~~
+Clang and dependencies
+~~~~~~~~~~~~~~~~~~~~~~
 
 Make sure you have clang (>=3.9) installed on the system  ::
 
- sudo apt-get install clang
+ sudo apt install clang
+
+Some i386 headers will also be needed as eBPF is not x86_64 and some included headers
+are architecture specific ::
+
+ sudo apt install libc6-dev-i386 --no-install-recommends
 
 libbpf
 ~~~~~~
@@ -86,6 +100,8 @@ Now, you can build and install the library ::
  sudo make install_headers
  sudo ldconfig
 
+In some cases your system will not find the libbpf library that is installed under
+`/usr/lib64` so you may need to modify your ldconfig configuration.
 
 Compile and install Suricata
 ----------------------------
@@ -97,7 +113,8 @@ To get Suricata source, you can use the usual ::
 
  ./autogen.sh
 
-Then you need to add the ebpf flags to configure ::
+Then you need to add the ebpf flags to configure and specify the Clang
+compiler for building all C sources, including the eBPF programs ::
 
  CC=clang ./configure --prefix=/usr/ --sysconfdir=/etc/ --localstatedir=/var/ \
  --enable-ebpf --enable-ebpf-build
@@ -105,10 +122,15 @@ Then you need to add the ebpf flags to configure ::
  make clean && make
  sudo  make install-full
  sudo ldconfig
- sudo mkdir /etc/suricata/ebpf/
+ sudo mkdir /usr/libexec/suricata/ebpf/
 
 The ``clang`` compiler is needed if you want to build eBPF files as the build
-is done via a specific eBPF backend available only in llvm/clang suite.
+is done via a specific eBPF backend available only in llvm/clang suite. If you
+don't want to use Clang for building Suricata itself, you can still specify it
+separately, using the ``--with-clang`` parameter ::
+
+ ./configure --prefix=/usr/ --sysconfdir=/etc/ --localstatedir=/var/ \
+ --enable-ebpf --enable-ebpf-build --with-clang=/usr/bin/clang
 
 Setup bypass
 ------------
@@ -146,15 +168,16 @@ Setup eBPF filter
 -----------------
 
 The file `ebpf/vlan_filter.c` contains a list of vlan id in a switch
-that you need to edit to get something adapted to your network. Another really
-basic filter dropping IPv6 packets is also available in `ebpf/filter.c`.
+that you need to edit to get something adapted to your network. Another
+filter dropping packets from or to a set of IPv4 address is also available in
+`ebpf/filter.c`. See :ref:`ebpf-pinned-maps` for more information.
 
 Suricata can load as eBPF filter any eBPF code exposing a ``filter`` section.
 
 Once modifications and build via `make` are done, you can copy the resulting
 eBPF filter as needed ::
 
- cp ebpf/vlan_filter.bpf /etc/suricata/ebpf/
+ cp ebpf/vlan_filter.bpf /usr/libexec/suricata/ebpf/
 
 Then setup the `ebpf-filter-file` variable in af-packet section in ``suricata.yaml`` ::
 
@@ -163,9 +186,9 @@ Then setup the `ebpf-filter-file` variable in af-packet section in ``suricata.ya
     cluster-id: 97
     cluster-type: cluster_flow # choose any type suitable
     defrag: yes
-    # eBPF file containing a 'loadbalancer' function that will be inserted into the
+    # eBPF file containing a 'filter' function that will be inserted into the
     # kernel and used as load balancing function
-    ebpf-filter-file:  /etc/suricata/ebpf/vlan_filter.bpf
+    ebpf-filter-file:  /usr/libexec/suricata/ebpf/vlan_filter.bpf
     use-mmap: yes
     ring-size: 200000
 
@@ -185,7 +208,7 @@ update af-packet configuration in ``suricata.yaml`` to set bypass to yes ::
     cluster-type: cluster_qm # symmetric RSS hashing is mandatory to use this mode
     # eBPF file containing a 'filter' function that will be inserted into the
     # kernel and used as packet filter function
-    ebpf-filter-file:  /etc/suricata/ebpf/bypass_filter.bpf
+    ebpf-filter-file:  /usr/libexec/suricata/ebpf/bypass_filter.bpf
     bypass: yes
     use-mmap: yes
     ring-size: 200000
@@ -206,12 +229,12 @@ With any logic implemented in the eBPF filter. The value returned by the functio
 tagged with the ``loadbalancer`` section is used with a modulo on the CPU count to know in
 which socket the packet has to be send.
 
-An implementation of a simple IP pair hashing function is provided in the ``lb.bpf``
+An implementation of a simple symetric IP pair hashing function is provided in the ``lb.bpf``
 file.
 
 Copy the resulting eBPF filter as needed ::
 
- cp ebpf/lb.bpf /etc/suricata/ebpf/
+ cp ebpf/lb.bpf /usr/libexec/suricata/ebpf/
 
 Then use ``cluster_ebpf`` as load balancing method in the interface section of af-packet
 and point the ``ebpf-lb-file`` variable to the ``lb.bpf`` file ::
@@ -223,7 +246,7 @@ and point the ``ebpf-lb-file`` variable to the ``lb.bpf`` file ::
     defrag: yes
     # eBPF file containing a 'loadbalancer' function that will be inserted into the
     # kernel and used as load balancing function
-    ebpf-lb-file:  /etc/suricata/ebpf/lb.bpf
+    ebpf-lb-file:  /usr/libexec/suricata/ebpf/lb.bpf
     use-mmap: yes
     ring-size: 200000
 
@@ -240,12 +263,12 @@ on older kernel if you set ``BUILD_CPUMAP`` to 0 in ``ebpf/xdp_filter.c``.
 
 Copy the resulting xdp filter as needed::
 
- cp ebpf/xdp_filter.bpf /etc/suricata/ebpf/
+ cp ebpf/xdp_filter.bpf /usr/libexec/suricata/ebpf/
 
 Setup af-packet section/interface in ``suricata.yaml``.
 
 We will use ``cluster_qm`` as we have symmetric hashing on the NIC, ``xdp-mode: driver`` and we will
-also use the ``/etc/suricata/ebpf/xdp_filter.bpf`` (in our example TCP offloading/bypass) ::
+also use the ``/usr/libexec/suricata/ebpf/xdp_filter.bpf`` (in our example TCP offloading/bypass) ::
 
   - interface: eth3
     threads: 16
@@ -255,7 +278,7 @@ also use the ``/etc/suricata/ebpf/xdp_filter.bpf`` (in our example TCP offloadin
     # Xdp mode, "soft" for skb based version, "driver" for network card based
     # and "hw" for card supporting eBPF.
     xdp-mode: driver
-    xdp-filter-file:  /etc/suricata/ebpf/xdp_filter.bpf
+    xdp-filter-file:  /usr/libexec/suricata/ebpf/xdp_filter.bpf
     # if the ebpf filter implements a bypass function, you can set 'bypass' to
     # yes and benefit from these feature
     bypass: yes
@@ -323,22 +346,47 @@ Balance as much as you can
 Try to use the network's card balancing as much as possible ::
  
  for proto in tcp4 udp4 ah4 esp4 sctp4 tcp6 udp6 ah6 esp6 sctp6; do 
- 	/sbin/ethtool -N eth3 rx-flow-hash $proto sdfn
+    /sbin/ethtool -N eth3 rx-flow-hash $proto sd
  done
+
+This command triggers load balancing using only source and destination IPs. This may be not optimal
+in term of load balancing fairness but this ensures all packets of a flow will reach the same thread
+even in the case of IP fragmentation (where source and destination port will not be available
+for some fragmented packets).
 
 The XDP CPU redirect case
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 If ever your hardware is not able to do a symmetric load balancing but support XDP in driver mode, you
-can then use the CPU redirect map support available in the xdp_filter.bpf file. In this mode, the load
-balancing will be done by the XDP filter and each CPU will handle the whole packet treatment including
-the creation of the skb structure in kernel.
+can then use the CPU redirect map support available in the `xdp_filter.bpf` and `xdp_lb.bpf` file. In
+this mode, the load balancing will be done by the XDP filter and each CPU will handle the whole packet
+treatment including the creation of the skb structure in kernel.
 
 You will need Linux 4.15 or newer to use that feature.
 
 To do so set the `xdp-cpu-redirect` variable in af-packet interface configuration to a set of CPUs.
 Then use the `cluster_cpu` as load balancing function. You will also need to set the affinity
-accordingly.
+to be certain that CPU cores that have the skb assigned are used by Suricata.
+
+Also to avoid out of order packets, you need to set the RSS queue number to 1. So if our interface
+is `eth3` ::
+
+  /sbin/ethtool -L eth3 combined 1
+
+In case your system has more then 64 core, you need to set `CPUMAP_MAX_CPUS` to a value greater
+than this number in `xdp_lb.c` and `xdp_filter.c`.
+
+A sample configuration for pure XDP load balancing could look like ::
+
+  - interface: eth3
+    threads: 16
+    cluster-id: 97
+    cluster-type: cluster_cpu
+    xdp-mode: driver
+    xdp-filter-file:  /usr/libexec/suricata/ebpf/xdp_lb.bpf
+    xdp-cpu-redirect: ["1-17"] # or ["all"] to load balance on all CPUs
+    use-mmap: yes
+    ring-size: 200000
 
 It is possible to use `xdp_monitor` to have information about the behavior of CPU redirect. This
 program is available in Linux tree under the `samples/bpf` directory and will be build by the
@@ -368,12 +416,14 @@ Confirm you have the XDP filter engaged in the output (example)::
  (runmode-af-packet.c:220) <Config> (ParseAFPConfig) -- Enabling locked memory for mmap on iface eth3
  (runmode-af-packet.c:231) <Config> (ParseAFPConfig) -- Enabling tpacket v3 capture on iface eth3
  (runmode-af-packet.c:326) <Config> (ParseAFPConfig) -- Using queue based cluster mode for AF_PACKET (iface eth3)
- (runmode-af-packet.c:424) <Info> (ParseAFPConfig) -- af-packet will use '/etc/suricata/ebpf/xdp_filter.bpf' as XDP filter file
+ (runmode-af-packet.c:424) <Info> (ParseAFPConfig) -- af-packet will use '/usr/libexec/suricata/ebpf/xdp_filter.bpf' as XDP filter file
  (runmode-af-packet.c:429) <Config> (ParseAFPConfig) -- Using bypass kernel functionality for AF_PACKET (iface eth3)
  (runmode-af-packet.c:609) <Config> (ParseAFPConfig) -- eth3: enabling zero copy mode by using data release call
  (util-runmodes.c:296) <Info> (RunModeSetLiveCaptureWorkersForDevice) -- Going to use 8 thread(s)
  ...
  ...
+
+.. _ebpf-pinned-maps:
 
 Pinned maps usage
 -----------------
@@ -403,9 +453,12 @@ configuration of this interface ::
   - interface: eth3
     pinned-maps: true
 
+XDP and pinned-maps
+-------------------
+
 This option can be used to expose the maps of a socket filter to other processes.
 This allows for example, the external handling of a accept list or block list of
-IP addresses. See `scbpf` tool avalable in the `ebpf/scpbf` directory for an example
+IP addresses. See `bpfctrl <https://github.com/StamusNetworks/bpfctrl/>`_ for an example
 of external list handling.
 
 In the case of XDP, the eBPF filter is attached to the interface so if you
@@ -426,7 +479,7 @@ for, that will be used to check for the presence of the XDP filter ::
   - interface: eth3
     pinned-maps: true
     pinned-maps-name: ipv4_drop
-    xdp-filter-file: /etc/suricata/ebpf/xdp_filter.bpf
+    xdp-filter-file: /usr/libexec/suricata/ebpf/xdp_filter.bpf
 
 If XDP bypass is used in IPS mode stopping Suricata will trigger an interruption in the traffic.
 To fix that, the provided XDP filter `xdp_filter.bpf` is containing a map that will trigger
@@ -438,6 +491,19 @@ filter will switch to global bypass mode. Set key `0` to value `0` to send traff
 
 The switch must be activated on all sniffing interfaces. For an interface named `eth0` the global
 switch map will be `/sys/fs/bpf/suricata-eth0-global_bypass`.
+
+Pinned maps and eBPF filter
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Pinned maps can also be used with regular eBPF filters. The main difference is that the map will not
+persist after Suricata is stopped because it is attached to a socket and not an interface which
+is persistent.
+
+The eBPF filter `filter.bpf` uses a `ipv4_drop` map that contains the set of IPv4 addresses to drop.
+If `pinned-maps` is set to `true` in the interface configuration then the map will be pinned
+under `/sys/fs/bpf/suricata-eth3-ipv4_drop`.
+
+You can then use a tool like `bpfctrl` to manage the IPv4 addresses in the map.
 
 Hardware bypass with Netronome
 ------------------------------

@@ -17,12 +17,12 @@
 
 // written by Victor Julien
 
-use log::*;
+use crate::log::*;
 
-use smb::smb::*;
-use smb::smb2::*;
-use smb::dcerpc_records::*;
-use smb::events::*;
+use crate::smb::smb::*;
+use crate::smb::smb2::*;
+use crate::smb::dcerpc_records::*;
+use crate::smb::events::*;
 
 pub const DCERPC_TYPE_REQUEST:              u8 = 0;
 pub const DCERPC_TYPE_PING:                 u8 = 1;
@@ -194,7 +194,7 @@ impl SMBTransactionDCERPC {
 
 impl SMBState {
     fn new_dcerpc_tx(&mut self, hdr: SMBCommonHdr, vercmd: SMBVerCmdStat, cmd: u8, call_id: u32)
-        -> (&mut SMBTransaction)
+        -> &mut SMBTransaction
     {
         let mut tx = self.new_tx();
         tx.hdr = hdr;
@@ -209,7 +209,7 @@ impl SMBState {
     }
 
     fn new_dcerpc_tx_for_response(&mut self, hdr: SMBCommonHdr, vercmd: SMBVerCmdStat, call_id: u32)
-        -> (&mut SMBTransaction)
+        -> &mut SMBTransaction
     {
         let mut tx = self.new_tx();
         tx.hdr = hdr;
@@ -321,6 +321,7 @@ pub fn smb_write_dcerpc_record<'b>(state: &mut SMBState,
                         },
                         _ => {
                             tx.set_event(SMBEvent::MalformedData);
+                            tx.request_done = true;
                         },
                     }
                 },
@@ -353,17 +354,21 @@ pub fn smb_write_dcerpc_record<'b>(state: &mut SMBState,
                                 }
                                 bind_ifaces = Some(ifaces);
                             }
-                            tx.request_done = true;
                         },
                         _ => {
                             tx.set_event(SMBEvent::MalformedData);
                         },
                     }
+                    tx.request_done = true;
                 }
-                21...255 => {
+                21..=255 => {
                     tx.set_event(SMBEvent::MalformedData);
+                    tx.request_done = true;
                 },
-                _ => { }, // valid type w/o special processing
+                _ => {
+                    // valid type w/o special processing
+                    tx.request_done = true;
+                },
             }
         },
         _ => {
@@ -478,7 +483,7 @@ fn dcerpc_response_handle<'b>(tx: &mut SMBTransaction,
         DCERPC_TYPE_BINDACK => {
             // handled elsewhere
         },
-        21...255 => {
+        21..=255 => {
             if let Some(SMBTransactionTypeData::DCERPC(ref mut tdn)) = tx.type_data {
                 tdn.set_result(dcer.packet_type);
             }

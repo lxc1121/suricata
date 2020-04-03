@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2016 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -52,12 +52,10 @@
 #include "app-layer-ssl.h"
 
 #define PARSE_REGEX1 "^(!?)([_a-zA-Z0-9]+)(.*)$"
-static pcre *parse_regex1;
-static pcre_extra *parse_regex1_study;
+static DetectParseRegex parse_regex1;
 
 #define PARSE_REGEX2 "^(?:\\s*[|,]\\s*(!?)([_a-zA-Z0-9]+))(.*)$"
-static pcre *parse_regex2;
-static pcre_extra *parse_regex2_study;
+static DetectParseRegex parse_regex2;
 
 static int DetectSslStateMatch(DetectEngineThreadCtx *,
         Flow *, uint8_t, void *, void *,
@@ -82,14 +80,16 @@ static int g_tls_generic_list_id = 0;
 void DetectSslStateRegister(void)
 {
     sigmatch_table[DETECT_AL_SSL_STATE].name = "ssl_state";
+    sigmatch_table[DETECT_AL_SSL_STATE].desc = "match the state of the SSL connection";
+    sigmatch_table[DETECT_AL_SSL_STATE].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#ssl-state";
     sigmatch_table[DETECT_AL_SSL_STATE].AppLayerTxMatch = DetectSslStateMatch;
     sigmatch_table[DETECT_AL_SSL_STATE].Setup = DetectSslStateSetup;
     sigmatch_table[DETECT_AL_SSL_STATE].Free  = DetectSslStateFree;
 #ifdef UNITTESTS
     sigmatch_table[DETECT_AL_SSL_STATE].RegisterTests = DetectSslStateRegisterTests;
 #endif
-    DetectSetupParseRegexes(PARSE_REGEX1, &parse_regex1, &parse_regex1_study);
-    DetectSetupParseRegexes(PARSE_REGEX2, &parse_regex2, &parse_regex2_study);
+    DetectSetupParseRegexes(PARSE_REGEX1, &parse_regex1);
+    DetectSetupParseRegexes(PARSE_REGEX2, &parse_regex2);
 
     g_tls_generic_list_id = DetectBufferTypeRegister("tls_generic");
 
@@ -154,40 +154,37 @@ static int DetectSslStateMatch(DetectEngineThreadCtx *det_ctx,
  *
  * \param arg Pointer to the string to be parsed.
  *
- * \retval ssd  Pointer to DetectSslStateData on succese.
+ * \retval ssd  Pointer to DetectSslStateData on success.
  * \retval NULL On failure.
  */
 static DetectSslStateData *DetectSslStateParse(const char *arg)
 {
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov1[MAX_SUBSTRINGS];
     int ov2[MAX_SUBSTRINGS];
-    const char *str1;
-    const char *str2;
+    char str1[64];
+    char str2[64];
     int negate = 0;
     uint32_t flags = 0, mask = 0;
     DetectSslStateData *ssd = NULL;
 
-    ret = pcre_exec(parse_regex1, parse_regex1_study, arg, strlen(arg), 0, 0,
-                    ov1, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex1, arg, 0, 0, ov1, MAX_SUBSTRINGS);
     if (ret < 1) {
         SCLogError(SC_ERR_INVALID_SIGNATURE, "Invalid arg \"%s\" supplied to "
                    "ssl_state keyword.", arg);
         goto error;
     }
 
-    res = pcre_get_substring((char *)arg, ov1, MAX_SUBSTRINGS, 1, &str1);
+    res = pcre_copy_substring((char *)arg, ov1, MAX_SUBSTRINGS, 1, str1, sizeof(str1));
     if (res < 0) {
-        SCLogError(SC_ERR_PCRE_GET_SUBSTRING, "pcre_get_substring failed");
+        SCLogError(SC_ERR_PCRE_COPY_SUBSTRING, "pcre_copy_substring failed");
         goto error;
     }
     negate = !strcmp("!", str1);
-    pcre_free_substring(str1);
 
-    res = pcre_get_substring((char *)arg, ov1, MAX_SUBSTRINGS, 2, &str1);
+    res = pcre_copy_substring((char *)arg, ov1, MAX_SUBSTRINGS, 2, str1, sizeof(str1));
     if (res < 0) {
-        SCLogError(SC_ERR_PCRE_GET_SUBSTRING, "pcre_get_substring failed");
+        SCLogError(SC_ERR_PCRE_COPY_SUBSTRING, "pcre_copy_substring failed");
         goto error;
     }
 
@@ -217,33 +214,29 @@ static DetectSslStateData *DetectSslStateParse(const char *arg)
         goto error;
     }
 
-    pcre_free_substring(str1);
-
-    res = pcre_get_substring((char *)arg, ov1, MAX_SUBSTRINGS, 3, &str1);
+    res = pcre_copy_substring((char *)arg, ov1, MAX_SUBSTRINGS, 3, str1, sizeof(str1));
     if (res < 0) {
-        SCLogError(SC_ERR_PCRE_GET_SUBSTRING, "pcre_get_substring failed");
+        SCLogError(SC_ERR_PCRE_COPY_SUBSTRING, "pcre_copy_substring failed");
         goto error;
     }
     while (res > 0) {
-        ret = pcre_exec(parse_regex2, parse_regex2_study, str1, strlen(str1), 0, 0,
-                        ov2, MAX_SUBSTRINGS);
+        ret = DetectParsePcreExec(&parse_regex2, str1,  0, 0, ov2, MAX_SUBSTRINGS);
         if (ret < 1) {
             SCLogError(SC_ERR_INVALID_SIGNATURE, "Invalid arg \"%s\" supplied to "
                        "ssl_state keyword.", arg);
             goto error;
         }
 
-        res = pcre_get_substring((char *)str1, ov2, MAX_SUBSTRINGS, 1, &str2);
+        res = pcre_copy_substring((char *)str1, ov2, MAX_SUBSTRINGS, 1, str2, sizeof(str2));
         if (res < 0) {
-            SCLogError(SC_ERR_PCRE_GET_SUBSTRING, "pcre_get_substring failed");
+            SCLogError(SC_ERR_PCRE_COPY_SUBSTRING, "pcre_copy_substring failed");
             goto error;
         }
         negate = !strcmp("!", str2);
-        pcre_free_substring(str2);
 
-        res = pcre_get_substring((char *)str1, ov2, MAX_SUBSTRINGS, 2, &str2);
+        res = pcre_copy_substring((char *)str1, ov2, MAX_SUBSTRINGS, 2, str2, sizeof(str2));
         if (res <= 0) {
-            SCLogError(SC_ERR_PCRE_GET_SUBSTRING, "pcre_get_substring failed");
+            SCLogError(SC_ERR_PCRE_COPY_SUBSTRING, "pcre_copy_substring failed");
             goto error;
         }
         if (strcmp("client_hello", str2) == 0) {
@@ -272,16 +265,14 @@ static DetectSslStateData *DetectSslStateParse(const char *arg)
             goto error;
         }
 
-        res = pcre_get_substring((char *)str1, ov2, MAX_SUBSTRINGS, 3, &str2);
+        res = pcre_copy_substring((char *)str1, ov2, MAX_SUBSTRINGS, 3, str2, sizeof(str2));
         if (res < 0) {
-            SCLogError(SC_ERR_PCRE_GET_SUBSTRING, "pcre_get_substring failed");
+            SCLogError(SC_ERR_PCRE_COPY_SUBSTRING, "pcre_copy_substring failed");
             goto error;
         }
 
-        pcre_free_substring(str1);
-        str1 = str2;
+        memcpy(str1, str2, sizeof(str1));
     }
-    pcre_free_substring(str1);
 
     if ( (ssd = SCMalloc(sizeof(DetectSslStateData))) == NULL) {
         goto error;

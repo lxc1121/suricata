@@ -130,8 +130,8 @@ static void DetectRun(ThreadVars *th_v,
     DetectRulePacketRules(th_v, de_ctx, det_ctx, p, pflow, &scratch);
     PACKET_PROFILING_DETECT_END(p, PROF_DETECT_RULES);
 
-    /* run tx/state inspection */
-    if (pflow && pflow->alstate) {
+    /* run tx/state inspection. Don't call for ICMP error msgs. */
+    if (pflow && pflow->alstate && likely(pflow->proto == p->proto)) {
         PACKET_PROFILING_DETECT_START(p, PROF_DETECT_TX);
         DetectRunTx(th_v, de_ctx, det_ctx, p, pflow, &scratch);
         PACKET_PROFILING_DETECT_END(p, PROF_DETECT_TX);
@@ -386,54 +386,49 @@ DetectPrefilterSetNonPrefilterList(const Packet *p, DetectEngineThreadCtx *det_c
 
 /** \internal
  *  \brief update flow's file tracking flags based on the detection engine
+ *         A set of flags is prepared that is sent to the File API. The
+           File API may reject one or more based on the global force settings.
  */
 static inline void
-DetectPostInspectFileFlagsUpdate(Flow *pflow, const SigGroupHead *sgh, uint8_t direction)
+DetectPostInspectFileFlagsUpdate(Flow *f, const SigGroupHead *sgh, uint8_t direction)
 {
-    /* see if this sgh requires us to consider file storing */
-    if (!FileForceFilestore() && (sgh == NULL ||
-                sgh->filestore_cnt == 0))
-    {
-        FileDisableStoring(pflow, direction);
-    }
+    uint16_t flow_file_flags = FLOWFILE_INIT;
+
+    if (sgh == NULL) {
+        SCLogDebug("requesting disabling all file features for flow");
+        flow_file_flags = FLOWFILE_NONE;
+    } else {
+        if (sgh->filestore_cnt == 0) {
+            SCLogDebug("requesting disabling filestore for flow");
+            flow_file_flags |= (FLOWFILE_NO_STORE_TS|FLOWFILE_NO_STORE_TC);
+        }
 #ifdef HAVE_MAGIC
-    /* see if this sgh requires us to consider file magic */
-    if (!FileForceMagic() && (sgh == NULL ||
-                !(sgh->flags & SIG_GROUP_HEAD_HAVEFILEMAGIC)))
-    {
-        SCLogDebug("disabling magic for flow");
-        FileDisableMagic(pflow, direction);
-    }
+        if (!(sgh->flags & SIG_GROUP_HEAD_HAVEFILEMAGIC)) {
+            SCLogDebug("requesting disabling magic for flow");
+            flow_file_flags |= (FLOWFILE_NO_MAGIC_TS|FLOWFILE_NO_MAGIC_TC);
+        }
 #endif
-    /* see if this sgh requires us to consider file md5 */
-    if (!FileForceMd5() && (sgh == NULL ||
-                !(sgh->flags & SIG_GROUP_HEAD_HAVEFILEMD5)))
-    {
-        SCLogDebug("disabling md5 for flow");
-        FileDisableMd5(pflow, direction);
+#ifdef HAVE_NSS
+        if (!(sgh->flags & SIG_GROUP_HEAD_HAVEFILEMD5)) {
+            SCLogDebug("requesting disabling md5 for flow");
+            flow_file_flags |= (FLOWFILE_NO_MD5_TS|FLOWFILE_NO_MD5_TC);
+        }
+        if (!(sgh->flags & SIG_GROUP_HEAD_HAVEFILESHA1)) {
+            SCLogDebug("requesting disabling sha1 for flow");
+            flow_file_flags |= (FLOWFILE_NO_SHA1_TS|FLOWFILE_NO_SHA1_TC);
+        }
+        if (!(sgh->flags & SIG_GROUP_HEAD_HAVEFILESHA256)) {
+            SCLogDebug("requesting disabling sha256 for flow");
+            flow_file_flags |= (FLOWFILE_NO_SHA256_TS|FLOWFILE_NO_SHA256_TC);
+        }
+#endif
+        if (!(sgh->flags & SIG_GROUP_HEAD_HAVEFILESIZE)) {
+            SCLogDebug("requesting disabling filesize for flow");
+            flow_file_flags |= (FLOWFILE_NO_SIZE_TS|FLOWFILE_NO_SIZE_TC);
+        }
     }
-
-    /* see if this sgh requires us to consider file sha1 */
-    if (!FileForceSha1() && (sgh == NULL ||
-                !(sgh->flags & SIG_GROUP_HEAD_HAVEFILESHA1)))
-    {
-        SCLogDebug("disabling sha1 for flow");
-        FileDisableSha1(pflow, direction);
-    }
-
-    /* see if this sgh requires us to consider file sha256 */
-    if (!FileForceSha256() && (sgh == NULL ||
-                !(sgh->flags & SIG_GROUP_HEAD_HAVEFILESHA256)))
-    {
-        SCLogDebug("disabling sha256 for flow");
-        FileDisableSha256(pflow, direction);
-    }
-
-    /* see if this sgh requires us to consider filesize */
-    if (sgh == NULL || !(sgh->flags & SIG_GROUP_HEAD_HAVEFILESIZE))
-    {
-        SCLogDebug("disabling filesize for flow");
-        FileDisableFilesize(pflow, direction);
+    if (flow_file_flags != 0) {
+        FileUpdateFlowFileFlags(f, flow_file_flags, direction);
     }
 }
 
@@ -729,10 +724,8 @@ static inline void DetectRulePacketRules(
 
     SGH_PROFILING_RECORD(det_ctx, scratch->sgh);
 #ifdef PROFILING
-#ifdef HAVE_LIBJANSSON
     if (match_cnt >= de_ctx->profile_match_logging_threshold)
         RulesDumpMatchArray(det_ctx, scratch->sgh, p);
-#endif
 #endif
 
     uint32_t sflags, next_sflags = 0;
@@ -950,6 +943,7 @@ static void DetectRunCleanup(DetectEngineThreadCtx *det_ctx,
     PACKET_PROFILING_DETECT_START(p, PROF_DETECT_CLEANUP);
     /* cleanup pkt specific part of the patternmatcher */
     PacketPatternCleanup(det_ctx);
+    InspectionBufferClean(det_ctx);
 
     if (pflow != NULL) {
         /* update inspected tracker for raw reassembly */
@@ -1074,6 +1068,7 @@ static bool DetectRunTxInspectRule(ThreadVars *tv,
         flow_flags &=~ STREAM_FLUSH;
 
     TRACE_SID_TXS(s->id, tx, "starting %s", direction ? "toclient" : "toserver");
+    TRACE_SID_TXS(s->id, tx, "FLUSH? %s", (flow_flags & STREAM_FLUSH)?"true":"false");
 
     /* for a new inspection we inspect pkt header and packet matches */
     if (likely(stored_flags == NULL)) {
@@ -1599,7 +1594,7 @@ static void DetectNoFlow(ThreadVars *tv,
  *  \retval TM_ECODE_FAILED error
  *  \retval TM_ECODE_OK ok
  */
-TmEcode Detect(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, PacketQueue *postpq)
+TmEcode Detect(ThreadVars *tv, Packet *p, void *data)
 {
     DEBUG_VALIDATE_PACKET(p);
 

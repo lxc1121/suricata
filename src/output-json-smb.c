@@ -45,9 +45,7 @@
 
 #include "output-json-smb.h"
 
-#ifdef HAVE_LIBJANSSON
 #include "rust.h"
-#include "rust-smb-log-gen.h"
 
 json_t *JsonSMBAddMetadata(const Flow *f, uint64_t tx_id)
 {
@@ -107,12 +105,3 @@ void JsonSMBLogRegister(void)
 
     SCLogDebug("SMB JSON logger registered.");
 }
-
-#else /* No JSON support. */
-
-void JsonSMBLogRegister(void)
-{
-}
-
-#endif /* HAVE_LIBJANSSON */
-

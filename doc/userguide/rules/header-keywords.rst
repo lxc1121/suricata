@@ -17,7 +17,7 @@ For example::
   ttl:10;
 
 At the end of the ttl keyword you can enter the value on which you
-want to match.  The Time-to-live value determines the maximal amount
+want to match. The Time-to-live value determines the maximal amount
 of time a packet can be in the Internet-system. If this field is set
 to 0, then the packet has to be destroyed. The time-to-live is based
 on hop count. Each hop/router the packet passes subtracts one of the
@@ -71,7 +71,7 @@ sameip
 ^^^^^^
 
 Every packet has a source IP-address and a destination IP-address. It
-can be that the source IP is the same as the destination IP.  With the
+can be that the source IP is the same as the destination IP. With the
 sameip keyword you can check if the IP address of the source is the
 same as the IP address of the destination. The format of the sameip
 keyword is::
@@ -111,10 +111,29 @@ The named variant of that example would be::
 
     ip_proto:PIM
 
+ipv4.hdr
+^^^^^^^^
+
+Sticky buffer to match on the whole IPv4 header.
+
+Example rule:
+
+.. container:: example-rule
+
+    alert ip any any -> any any (:example-rule-emphasis:`ipv4.hdr; content:"|3A|"; offset:9; depth:1;` sid:1234; rev:5;)
+
+This example looks if byte 9 of IPv4 header has value 3A.
+That means that the IPv4 protocol is ICMPv6.
+
+ipv6.hdr
+^^^^^^^^
+
+Sticky buffer to match on the whole IPv6 header.
+
 id
 ^^
 
-With the id keyword, you can match on a specific IP ID value.  The ID
+With the id keyword, you can match on a specific IP ID value. The ID
 identifies each packet sent by a host and increments usually with one
 with each packet that is being send. The IP ID is used as a fragment
 identification number. Each packet has an IP ID, and when the packet
@@ -142,19 +161,23 @@ API of MaxMind.
 
 The syntax of geoip::
 
-  geoip: src, RU;
-  geoip: both, CN, RU;
-  geoip: dst, CN, RU, IR;
-  geoip: both, US, CA, UK;
-  geoip: any, CN, IR;
+  geoip: src,RU;
+  geoip: both,CN,RU;
+  geoip: dst,CN,RU,IR;
+  geoip: both,US,CA,UK;
+  geoip: any,CN,IR;
 
 So, you can see you can use the following to make clear on which
-direction you would like to match::
+direction you would like to match
 
-  both: both directions have to match with the given geoip (geopip's)
-  any: one of the directions have to match with the given geoip ('s).
-  dest: if the destination matches with the given geoip.
-  src: the source matches with the given geoip.
+====== =============================================================
+Option Description
+====== =============================================================
+both   Both directions have to match with the given geoip(s)
+any    One of the directions has to match with the given geoip(s).
+dest   If the destination matches with the given geoip.
+src    The source matches with the given geoip.
+====== =============================================================
 
 The keyword only supports IPv4. As it uses the GeoIP2 API of MaxMind,
 libmaxminddb must be compiled in. You must download and install the
@@ -434,43 +457,43 @@ Example of the itype keyword in a signature:
 
 The following lists all ICMP types known at the time of writing. A recent table can be found `at the website of IANA <https://www.iana.org/assignments/icmp-parameters/icmp-parameters.xhtml>`_
 
-==========  ==========================================================
-ICMP Type   Name
-==========  ==========================================================
-0           Echo Reply
-3           Destination Unreachable
-4           Source Quench
-5           Redirect
-6           Alternate Host Address
-8           Echo
-9           Router Advertisement
-10          Router Solicitation
-11          Time Exceeded
-12          Parameter Problem
-13          Timestamp
-14          Timestamp Reply
-15          Information Request
-16          Information Reply
-17          Address Mask Request
-18          Address Mask Reply
-30          Traceroute
-31          Datagram Conversion Error
-32          Mobile Host Redirect
-33          IPv6 Where-Are-You
-34          IPv6 I-Am-Here
-35          Mobile Registration Request
-36          Mobile Registration Reply
-37          Domain Name Request
-38          Domain Name Reply
-39          SKIP
-40          Photuris
-41          Experimental mobility protocols such as Seamoby
-==========  ==========================================================
+=========  ==========================================================
+ICMP Type  Name
+=========  ==========================================================
+0          Echo Reply
+3          Destination Unreachable
+4          Source Quench
+5          Redirect
+6          Alternate Host Address
+8          Echo
+9          Router Advertisement
+10         Router Solicitation
+11         Time Exceeded
+12         Parameter Problem
+13         Timestamp
+14         Timestamp Reply
+15         Information Request
+16         Information Reply
+17         Address Mask Request
+18         Address Mask Reply
+30         Traceroute
+31         Datagram Conversion Error
+32         Mobile Host Redirect
+33         IPv6 Where-Are-You
+34         IPv6 I-Am-Here
+35         Mobile Registration Request
+36         Mobile Registration Reply
+37         Domain Name Request
+38         Domain Name Reply
+39         SKIP
+40         Photuris
+41         Experimental mobility protocols such as Seamoby
+=========  ==========================================================
 
 icode
 ^^^^^
 
-With the icode keyword you can match on a specific ICMP code.  The
+With the icode keyword you can match on a specific ICMP code. The
 code of a ICMP message clarifies the message. Together with the
 ICMP-type it indicates with what kind of problem you are dealing with.
 A code has a different purpose with every ICMP-type.
@@ -495,43 +518,75 @@ The following lists the meaning of all ICMP types. When a code is not listed,
 only type 0 is defined and has the meaning of the ICMP code, in the table above.
 A recent table can be found `at the website of IANA <https://www.iana.org/assignments/icmp-parameters/icmp-parameters.xhtml>`_
 
-==========  ==========  =========================================================================
-ICMP Code   ICMP Type   Description
-==========  ==========  =========================================================================
-3           - 0         - Net Unreachable
-            - 1         - Host Unreachable
-            - 2         - Protocol Unreachable
-            - 3         - Port Unreachable
-            - 4         - Fragmentation Needed and Don't Fragment was Set
-            - 5         - Source Route Failed
-            - 6         - Destination Network Unknown
-            - 7         - Destination Host Unknown
-            - 8         - Source Host Isolated
-            - 9         - Communication with Destination Network is Administratively Prohibited
-            - 10        - Communication with Destination Host is Administratively Prohibited
-            - 11        - Destination Network Unreachable for Type of Service
-            - 12        - Destination Host Unreachable for Type of Service
-            - 13        - Communication Administratively Prohibited
-            - 14        - Host Precedence Violation
-            - 15        - Precedence cutoff in effect
-5           - 0         - Redirect Datagram for the Network (or subnet)
-            - 1         - Redirect Datagram for the Host
-            - 2         - Redirect Datagram for the Type of Service and Network
-            - 3         - Redirect Datagram for the Type of Service and Host
-9           - 0         - Normal router advertisement
-            - 16        - Doest not route common traffic
-11          - 0         - Time to Live exceeded in Transit
-            - 1         - Fragment Reassembly Time Exceeded
-12          - 0         - Pointer indicates the error
-            - 1         - Missing a Required Option
-            - 2         - Bad Length
-40          - 0         - Bad SPI
-            - 1         - Authentication Failed
-            - 2         - Decompression Failed
-            - 3         - Decryption Failed
-            - 4         - Need Authentication
-            - 5         - Need Authorization
-==========  ==========  =========================================================================
++-----------+-----------+-----------------------------------------------------------------------+
+| ICMP Code | ICMP Type | Description                                                           |
++===========+===========+=======================================================================+
+| 3         | 0         | Net Unreachable                                                       |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 1         | Host Unreachable                                                      |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 2         | Protocol Unreachable                                                  |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 3         | Port Unreachable                                                      |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 4         | Fragmentation Needed and Don't Fragment was Set                       |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 5         | Source Route Failed                                                   |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 6         | Destination Network Unknown                                           |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 7         | Destination Host Unknown                                              |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 8         | Source Host Isolated                                                  |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 9         | Communication with Destination Network is Administratively Prohibited |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 10        | Communication with Destination Host is Administratively Prohibited    |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 11        | Destination Network Unreachable for Type of Service                   |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 12        | Destination Host Unreachable for Type of Service                      |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 13        | Communication Administratively Prohibited                             |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 14        | Host Precedence Violation                                             |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 15        | Precedence cutoff in effect                                           |
++-----------+-----------+-----------------------------------------------------------------------+
+| 5         | 0         | Redirect Datagram for the Network (or subnet)                         |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 1         | Redirect Datagram for the Host                                        |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 2         | Redirect Datagram for the Type of Service and Network                 |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 3         | Redirect Datagram for the Type of Service and Host                    |
++-----------+-----------+-----------------------------------------------------------------------+
+| 9         | 0         | Normal router advertisement                                           |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 16        | Doesn't route common traffic                                          |
++-----------+-----------+-----------------------------------------------------------------------+
+| 11        | 0         | Time to Live exceeded in Transit                                      |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 1         | Fragment Reassembly Time Exceeded                                     |
++-----------+-----------+-----------------------------------------------------------------------+
+| 12        | 0         | Pointer indicates the error                                           |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 1         | Missing a Required Option                                             |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 2         | Bad Length                                                            |
++-----------+-----------+-----------------------------------------------------------------------+
+| 40        | 0         | Bad SPI                                                               |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 1         | Authentication Failed                                                 |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 2         | Decompression Failed                                                  |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 3         | Decryption Failed                                                     |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 4         | Need Authentication                                                   |
+|           +-----------+-----------------------------------------------------------------------+
+|           | 5         | Need Authorization                                                    |
++-----------+-----------+-----------------------------------------------------------------------+
 
 
 icmp_id
@@ -580,3 +635,26 @@ Example of icmp_seq in a rule:
 .. container:: example-rule
 
     alert icmp $EXTERNAL_NET any -> $HOME_NET any (msg:"GPL SCAN Broadscan Smurf Scanner"; dsize:4; icmp_id:0; :example-rule-emphasis:`icmp_seq:0;` itype:8; classtype:attempted-recon; sid:2100478; rev:4;)
+
+icmpv6.hdr
+^^^^^^^^^^
+
+Sticky buffer to match on the whole ICMPv6 header.
+
+icmpv6.mtu
+^^^^^^^^^^
+
+Match on the ICMPv6 MTU optional value. Will not match if the MTU is not
+present.
+
+The format of the keyword::
+
+  icmpv6.mtu:<min>-<max>;
+  icmpv6.mtu:[<|>]<number>;
+  icmpv6.mtu:<value>;
+
+Example rule:
+
+.. container:: example-rule
+
+    alert ip $EXTERNAL_NET any -> $HOME_NET any (:example-rule-emphasis:`icmpv6.mtu:<1280;` sid:1234; rev:5;)

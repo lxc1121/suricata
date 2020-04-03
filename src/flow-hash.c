@@ -49,6 +49,7 @@
 
 #define FLOW_DEFAULT_FLOW_PRUNE 5
 
+FlowBucket *flow_hash;
 SC_ATOMIC_EXTERN(unsigned int, flow_prune_idx);
 SC_ATOMIC_EXTERN(unsigned int, flow_flags);
 
@@ -555,7 +556,7 @@ static Flow *TcpReuseReplace(ThreadVars *tv, DecodeThreadVars *dtv,
     /* tag flow as reused so future lookups won't find it */
     old_f->flags |= FLOW_TCP_REUSED;
     /* get some settings that we move over to the new flow */
-    FlowThreadId thread_id = old_f->thread_id;
+    FlowThreadId thread_id[2] = { old_f->thread_id[0], old_f->thread_id[1] };
 
     /* since fb lock is still held this flow won't be found until we are done */
     FLOWLOCK_UNLOCK(old_f);
@@ -578,7 +579,8 @@ static Flow *TcpReuseReplace(ThreadVars *tv, DecodeThreadVars *dtv,
     f->flow_hash = hash;
     f->fb = fb;
 
-    f->thread_id = thread_id;
+    f->thread_id[0] = thread_id[0];
+    f->thread_id[1] = thread_id[1];
     return f;
 }
 
@@ -780,7 +782,6 @@ Flow *FlowGetFromFlowKey(FlowKey *key, struct timespec *ttime, const uint32_t ha
     } else if (key->src.family == AF_INET6) {
         f->flags |= FLOW_IPV6;
     }
-    FlowUpdateState(f, FLOW_STATE_CAPTURE_BYPASSED);
 
     f->protomap = FlowGetProtoMapping(f->proto);
     /* set timestamp to now */
@@ -931,8 +932,10 @@ static Flow *FlowGetUsedFlow(ThreadVars *tv, DecodeThreadVars *dtv)
             f->flow_end_flags |= FLOW_END_FLAG_STATE_ESTABLISHED;
         else if (state == FLOW_STATE_CLOSED)
             f->flow_end_flags |= FLOW_END_FLAG_STATE_CLOSED;
+#ifdef CAPTURE_OFFLOAD
         else if (state == FLOW_STATE_CAPTURE_BYPASSED)
             f->flow_end_flags |= FLOW_END_FLAG_STATE_BYPASSED;
+#endif
         else if (state == FLOW_STATE_LOCAL_BYPASSED)
             f->flow_end_flags |= FLOW_END_FLAG_STATE_BYPASSED;
 

@@ -812,6 +812,7 @@ static OutputInitResult OutputLuaLogInit(ConfNode *conf)
             om->alproto = ALPROTO_TLS;
             om->tc_log_progress = TLS_HANDSHAKE_DONE;
             om->ts_log_progress = TLS_HANDSHAKE_DONE;
+            AppLayerParserRegisterLogger(IPPROTO_TCP, ALPROTO_TLS);
        } else if (opts.alproto == ALPROTO_DNS) {
             om->TxLogFunc = LuaTxLogger;
             om->alproto = ALPROTO_DNS;
@@ -824,6 +825,7 @@ static OutputInitResult OutputLuaLogInit(ConfNode *conf)
             om->alproto = ALPROTO_SSH;
             om->tc_log_progress = SSH_STATE_BANNER_DONE;
             om->ts_log_progress = SSH_STATE_BANNER_DONE;
+            AppLayerParserRegisterLogger(IPPROTO_TCP, ALPROTO_SSH);
         } else if (opts.alproto == ALPROTO_SMTP) {
             om->TxLogFunc = LuaTxLogger;
             om->alproto = ALPROTO_SMTP;

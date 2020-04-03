@@ -49,8 +49,6 @@
 #include "app-layer-ftp.h"
 #include "output-json-ftp.h"
 
-#ifdef HAVE_LIBJANSSON
-
 typedef struct LogFTPFileCtx_ {
     LogFileCtx *file_ctx;
     OutputJsonCommonSettings cfg;
@@ -62,31 +60,6 @@ typedef struct LogFTPLogThread_ {
     MemBuffer          *buffer;
 } LogFTPLogThread;
 
-/*
- * \brief Returns the ending offset of the next line.
- *
- * Here, "next line" is defined as terminating on
- * - Newline character
- * - Null character
- *
- * \param buffer Contains zero or more characters.
- * \param len Size, in bytes, of buffer.
- *
- * \retval Offset from the start of buffer indicating the where the
- * next "line ends". The characters between the input buffer and this
- * value comprise the line.
- *
- * NULL is found first or a newline isn't found, then
- */
-static uint16_t JsonGetNextLineFromBuffer(const char *buffer, const uint16_t len)
-{
-    if (!buffer || *buffer == '\0')
-        return UINT16_MAX;
-
-    char *c = strchr(buffer, '\n');
-    return c == NULL ? len : c - buffer + 1;
-}
-
 static json_t *JsonFTPLogCommand(Flow *f, FTPTransaction *tx)
 {
     json_t *cjs = json_object();
@@ -95,8 +68,8 @@ static json_t *JsonFTPLogCommand(Flow *f, FTPTransaction *tx)
     }
 
     /* Preallocate array objects to simplify failure case */
-    json_t *js_resplist;
-    json_t *js_respcode_list;
+    json_t *js_resplist = NULL;
+    json_t *js_respcode_list = NULL;
     if (!TAILQ_EMPTY(&tx->response_list)) {
         js_resplist = json_array();
         js_respcode_list = json_array();
@@ -111,8 +84,7 @@ static json_t *JsonFTPLogCommand(Flow *f, FTPTransaction *tx)
         }
     }
 
-    json_object_set_new(cjs, "command",
-                        json_string(tx->command_descriptor->command_name_upper));
+    json_object_set_new(cjs, "command", json_string(tx->command_descriptor->command_name));
     uint32_t min_length = tx->command_descriptor->command_length + 1; /* command + space */
     if (tx->request_length > min_length) {
         json_object_set_new(cjs, "command_data",
@@ -305,10 +277,3 @@ void JsonFTPLogRegister(void)
 
     SCLogDebug("FTP JSON logger registered.");
 }
-#else /* HAVE_LIBJANSSON */
-
-void JsonFTPLogRegister(void)
-{
-}
-
-#endif /* HAVE_LIBJANSSON */

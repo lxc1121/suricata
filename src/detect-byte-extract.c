@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -86,8 +86,7 @@
     "(?:(?:,\\s*([^\\s,]+)\\s*)|(?:,\\s*([^\\s,]+)\\s+([^\\s,]+)\\s*))?" \
     "$"
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 static int DetectByteExtractSetup(DetectEngineCtx *, Signature *, const char *);
 static void DetectByteExtractRegisterTests(void);
@@ -99,21 +98,23 @@ static void DetectByteExtractFree(void *);
 void DetectByteExtractRegister(void)
 {
     sigmatch_table[DETECT_BYTE_EXTRACT].name = "byte_extract";
+    sigmatch_table[DETECT_BYTE_EXTRACT].desc = "extract <num of bytes> at a particular <offset> and store it in <var_name>";
+    sigmatch_table[DETECT_BYTE_EXTRACT].url = DOC_URL DOC_VERSION "/rules/payload-keywords.html#byte-extract";
     sigmatch_table[DETECT_BYTE_EXTRACT].Match = NULL;
     sigmatch_table[DETECT_BYTE_EXTRACT].Setup = DetectByteExtractSetup;
     sigmatch_table[DETECT_BYTE_EXTRACT].Free = DetectByteExtractFree;
     sigmatch_table[DETECT_BYTE_EXTRACT].RegisterTests = DetectByteExtractRegisterTests;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
 int DetectByteExtractDoMatch(DetectEngineThreadCtx *det_ctx, const SigMatchData *smd,
-                             const Signature *s, uint8_t *payload,
+                             const Signature *s, const uint8_t *payload,
                              uint16_t payload_len, uint64_t *value,
                              uint8_t endian)
 {
     DetectByteExtractData *data = (DetectByteExtractData *)smd->ctx;
-    uint8_t *ptr = NULL;
+    const uint8_t *ptr = NULL;
     int32_t len = 0;
     uint64_t val = 0;
     int extbytes;
@@ -209,13 +210,13 @@ int DetectByteExtractDoMatch(DetectEngineThreadCtx *det_ctx, const SigMatchData 
 static inline DetectByteExtractData *DetectByteExtractParse(const char *arg)
 {
     DetectByteExtractData *bed = NULL;
+#undef MAX_SUBSTRINGS
 #define MAX_SUBSTRINGS 100
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
     int i = 0;
 
-    ret = pcre_exec(parse_regex, parse_regex_study, arg,
-                    strlen(arg), 0, 0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, arg,  0, 0, ov, MAX_SUBSTRINGS);
     if (ret < 3 || ret > 19) {
         SCLogError(SC_ERR_PCRE_PARSE, "parse error, ret %" PRId32
                    ", string \"%s\"", ret, arg);
@@ -538,7 +539,8 @@ static int DetectByteExtractSetup(DetectEngineCtx *de_ctx, Signature *s, const c
             sm_list = DETECT_SM_LIST_PMATCH;
         }
 
-        s->alproto = ALPROTO_DCERPC;
+        if (DetectSignatureSetAppProto(s, ALPROTO_DCERPC) < 0)
+            goto error;
         s->flags |= SIG_FLAG_APPLAYER;
 
     } else if (data->flags & DETECT_BYTE_EXTRACT_FLAG_RELATIVE) {

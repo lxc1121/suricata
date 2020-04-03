@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2018 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -35,8 +35,7 @@
  */
 #define PARSE_REGEX  "^\\s*([0-9]*)?\\s*([<>=-]+)?\\s*([0-9]+)?\\s*$"
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 /* prototypes */
 static int DetectTemplate2Match (DetectEngineThreadCtx *, Packet *,
@@ -47,7 +46,7 @@ void DetectTemplate2Free (void *);
 void DetectTemplate2RegisterTests (void);
 #endif
 static int PrefilterSetupTemplate2(DetectEngineCtx *de_ctx, SigGroupHead *sgh);
-static _Bool PrefilterTemplate2IsPrefilterable(const Signature *s);
+static bool PrefilterTemplate2IsPrefilterable(const Signature *s);
 
 /**
  * \brief Registration function for template2: keyword
@@ -67,7 +66,7 @@ void DetectTemplate2Register(void)
     sigmatch_table[DETECT_TEMPLATE2].SupportsPrefilter = PrefilterTemplate2IsPrefilterable;
     sigmatch_table[DETECT_TEMPLATE2].SetupPrefilter = PrefilterSetupTemplate2;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
     return;
 }
 
@@ -134,11 +133,10 @@ static DetectTemplate2Data *DetectTemplate2Parse (const char *template2str)
     char *arg1 = NULL;
     char *arg2 = NULL;
     char *arg3 = NULL;
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
 
-    ret = pcre_exec(parse_regex, parse_regex_study, template2str, strlen(template2str), 0, 0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, template2str, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret < 2 || ret > 4) {
         SCLogError(SC_ERR_PCRE_MATCH, "parse error, ret %" PRId32 "", ret);
         goto error;
@@ -346,7 +344,7 @@ PrefilterPacketTemplate2Set(PrefilterPacketHeaderValue *v, void *smctx)
     v->u8[2] = a->arg2;
 }
 
-static _Bool
+static bool
 PrefilterPacketTemplate2Compare(PrefilterPacketHeaderValue v, void *smctx)
 {
     const DetectTemplate2Data *a = smctx;
@@ -365,7 +363,7 @@ static int PrefilterSetupTemplate2(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
             PrefilterPacketTemplate2Match);
 }
 
-static _Bool PrefilterTemplate2IsPrefilterable(const Signature *s)
+static bool PrefilterTemplate2IsPrefilterable(const Signature *s)
 {
     const SigMatch *sm;
     for (sm = s->init_data->smlists[DETECT_SM_LIST_MATCH] ; sm != NULL; sm = sm->next) {

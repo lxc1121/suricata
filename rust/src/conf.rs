@@ -22,7 +22,7 @@ use std::ffi::{CString, CStr};
 use std::ptr;
 use std::str;
 
-use log::*;
+use crate::log::*;
 
 extern {
     fn ConfGet(key: *const c_char, res: *mut *const c_char) -> i8;
@@ -38,7 +38,7 @@ pub fn conf_get(key: &str) -> Option<&str> {
 
     unsafe {
         if ConfGet(CString::new(key).unwrap().as_ptr(), &mut vptr) != 1 {
-            SCLogInfo!("Failed to find value for key {}", key);
+            SCLogDebug!("Failed to find value for key {}", key);
             return None;
         }
     }

@@ -590,11 +590,7 @@ static void NetmapCallback(u_char *user, const struct nm_pkthdr *ph, const u_cha
     SCLogDebug("pktlen: %" PRIu32 " (pkt %p, pkt data %p)",
             GET_PKT_LEN(p), p, GET_PKT_DATA(p));
 
-    if (TmThreadsSlotProcessPkt(ntv->tv, ntv->slot, p) != TM_ECODE_OK) {
-        TmqhOutputPacketpool(ntv->tv, p);
-        return;
-    }
-    return;
+    (void)TmThreadsSlotProcessPkt(ntv->tv, ntv->slot, p);
 }
 
 /**
@@ -640,7 +636,7 @@ static TmEcode ReceiveNetmapLoop(ThreadVars *tv, void *data, void *slot)
             StatsSyncCountersIfSignalled(tv);
 
             /* poll timed out, lets handle the timeout */
-            TmThreadsCaptureHandleTimeout(tv, ntv->slot, NULL);
+            TmThreadsCaptureHandleTimeout(tv, NULL);
             continue;
         }
 
@@ -739,30 +735,22 @@ static TmEcode DecodeNetmapThreadInit(ThreadVars *tv, const void *initdata, void
 /**
  * \brief This function passes off to link type decoders.
  *
- * DecodeNetmap reads packets from the PacketQueue and passes
- * them off to the proper link type decoder.
- *
  * \param t pointer to ThreadVars
  * \param p pointer to the current packet
  * \param data pointer that gets cast into NetmapThreadVars for ntv
- * \param pq pointer to the current PacketQueue
- * \param postpq
  */
-static TmEcode DecodeNetmap(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, PacketQueue *postpq)
+static TmEcode DecodeNetmap(ThreadVars *tv, Packet *p, void *data)
 {
     SCEnter();
 
     DecodeThreadVars *dtv = (DecodeThreadVars *)data;
 
-    /* XXX HACK: flow timeout can call us for injected pseudo packets
-     *           see bug: https://redmine.openinfosecfoundation.org/issues/1107 */
-    if (p->flags & PKT_PSEUDO_STREAM_END)
-        SCReturnInt(TM_ECODE_OK);
+    BUG_ON(PKT_IS_PSEUDOPKT(p));
 
     /* update counters */
     DecodeUpdatePacketCounters(tv, dtv, p);
 
-    DecodeEthernet(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
+    DecodeEthernet(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p));
 
     PacketDecodeFinalize(tv, dtv, p);
 

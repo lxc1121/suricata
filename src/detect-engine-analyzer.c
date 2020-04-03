@@ -35,6 +35,7 @@
 #include "detect-content.h"
 #include "detect-flow.h"
 #include "detect-tcp-flags.h"
+#include "feature.h"
 #include "util-print.h"
 
 static int rule_warnings_only = 0;
@@ -50,6 +51,80 @@ typedef struct FpPatternStats_ {
     uint32_t cnt;
     uint64_t tot;
 } FpPatternStats;
+
+/* Details for each buffer being tracked */
+typedef struct DetectEngineAnalyzerItems {
+    int16_t     item_id;
+    bool        item_seen;
+    bool        export_item_seen;
+    bool        check_encoding_match;
+    const char  *item_name;
+    const char  *display_name;
+} DetectEngineAnalyzerItems;
+
+/* Track which items require the item_seen value to be exposed */
+struct ExposedItemSeen {
+    const char  *bufname;
+    bool        *item_seen_ptr;
+};
+
+DetectEngineAnalyzerItems analyzer_items[] = {
+    /* request keywords */
+    { 0, false, false, true,  "http_uri",           "http uri" },
+    { 0, false, false, false, "http_raw_uri",       "http raw uri" },
+    { 0, false, true,  false, "http_method",        "http method" },
+    { 0, false, false, false, "http_request_line",  "http request line" },
+    { 0, false, false, false, "http_client_body",   "http client body" },
+    { 0, false, false, true,  "http_header",        "http header" },
+    { 0, false, false, false, "http_raw_header",    "http raw header" },
+    { 0, false, false, true,  "http_cookie",        "http cookie" },
+    { 0, false, false, false, "http_user_agent",    "http user agent" },
+    { 0, false, false, false, "http_host",          "http host" },
+    { 0, false, false, false, "http_raw_host",      "http raw host" },
+    { 0, false, false, false, "http_accept_enc",    "http accept enc" },
+    { 0, false, false, false, "http_referer",       "http referer" },
+    { 0, false, false, false, "http_content_type",  "http content type" },
+    { 0, false, false, false, "http_header_names",  "http header names" },
+
+    /* response keywords not listed above */
+    { 0, false, false, false, "http_stat_msg",      "http stat msg" },
+    { 0, false, false, false, "http_stat_code",     "http stat code" },
+    { 0, false, true,  false, "file_data",          "http server body"},
+
+    /* missing request keywords */
+    { 0, false, false, false, "http_request_line",  "http request line" },
+    { 0, false, false, false, "http_accept",        "http accept" },
+    { 0, false, false, false, "http_accept_lang",   "http accept lang" },
+    { 0, false, false, false, "http_connection",    "http connection" },
+    { 0, false, false, false, "http_content_len",   "http content len" },
+    { 0, false, false, false, "http_protocol",      "http protocol" },
+    { 0, false, false, false, "http_start",         "http start" },
+
+    /* missing response keywords; some of the missing are listed above*/
+    { 0, false, false, false, "http_response_line", "http response line" },
+    { 0, false, false, false, "http.server",        "http server" },
+    { 0, false, false, false, "http.location",      "http location" },
+};
+
+/*
+ * This array contains the map between the `analyzer_items` array listed above and
+ * the item ids returned by DetectBufferTypeGetByName. Iterating signature's sigmatch
+ * array provides list_ids. The map converts those ids into elements of the
+ * analyzer items array.
+ *
+ * Ultimately, the g_buffer_type_hash is searched for each buffer name. The size of that
+ * hashlist is 256, so that's the value we use here.
+ */
+int16_t analyzer_item_map[256];
+
+/*
+ * Certain values must be directly accessible. This array contains items that are directly
+ * accessed when checking if they've been seen or not.
+ */
+struct ExposedItemSeen exposed_item_seen_list[] = {
+    { .bufname = "http_method"},
+    { .bufname = "file_data"}
+};
 
 static FpPatternStats fp_pattern_stats[DETECT_SM_LIST_MAX];
 
@@ -452,10 +527,18 @@ static void EngineAnalysisRulesPrintFP(const DetectEngineCtx *de_ctx, const Sign
         const char *name = DetectBufferTypeGetNameById(de_ctx, list_type);
         if (desc && name) {
             fprintf(rule_engine_analysis_FD, "%s (%s)", desc, name);
+        } else if (desc || name) {
+            fprintf(rule_engine_analysis_FD, "%s", desc ? desc : name);
         }
+
     }
 
-    fprintf(rule_engine_analysis_FD, "\" buffer.\n");
+    fprintf(rule_engine_analysis_FD, "\" ");
+    if (de_ctx->buffer_type_map[list_type] && de_ctx->buffer_type_map[list_type]->transforms.cnt) {
+        fprintf(rule_engine_analysis_FD, "(with %d transform(s)) ",
+                de_ctx->buffer_type_map[list_type]->transforms.cnt);
+    }
+    fprintf(rule_engine_analysis_FD, "buffer.\n");
 
     return;
 }
@@ -471,7 +554,6 @@ void EngineAnalysisRulesFailure(char *line, char *file, int lineno)
     fprintf(rule_engine_analysis_FD, "\n");
 }
 
-#ifdef HAVE_LIBJANSSON
 #include "util-buffer.h"
 #include "output-json.h"
 
@@ -581,7 +663,7 @@ static void DumpMatches(RuleAnalyzer *ctx, json_t *js, const SigMatchData *smd)
 
                         json_object_set_new(js_match_content, "fast_pattern", json_boolean(cd->flags & DETECT_CONTENT_FAST_PATTERN));
                         if (cd->flags & DETECT_CONTENT_FAST_PATTERN_ONLY) {
-                            AnalyzerNote(ctx, (char *)"'fast_pattern:only' option is silently ignored and is intepreted as regular 'fast_pattern'");
+                            AnalyzerNote(ctx, (char *)"'fast_pattern:only' option is silently ignored and is interpreted as regular 'fast_pattern'");
                         }
 
                         json_object_set_new(js_match, "content", js_match_content);
@@ -859,7 +941,49 @@ void EngineAnalysisRules2(const DetectEngineCtx *de_ctx, const Signature *s)
     json_decref(ctx.js);
     SCReturn;
 }
-#endif /* HAVE_LIBJANSSON */
+
+static void EngineAnalysisItemsReset(void)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(analyzer_items); i++) {
+        analyzer_items[i].item_seen = false;
+    }
+}
+
+static void EngineAnalysisItemsInit(void)
+{
+    static bool analyzer_init = false;
+
+    if (analyzer_init) {
+        EngineAnalysisItemsReset();
+        return;
+    }
+
+    memset(analyzer_item_map, -1, sizeof(analyzer_item_map));
+
+    for (size_t i = 0; i < ARRAY_SIZE(analyzer_items); i++) {
+        DetectEngineAnalyzerItems *analyzer_item = &analyzer_items[i];
+
+        analyzer_item->item_id = DetectBufferTypeGetByName(analyzer_item->item_name);
+        if (analyzer_item->item_id == -1) {
+            /* Mismatch between the analyzer_items array and what's supported */
+            FatalError(SC_ERR_INITIALIZATION,
+                       "unable to initialize engine-analysis table: detect buffer \"%s\" not recognized.",
+                       analyzer_item->item_name);
+        }
+        analyzer_item->item_seen = false;
+
+        if (analyzer_item->export_item_seen) {
+            for (size_t k = 0; k < ARRAY_SIZE(exposed_item_seen_list); k++) {
+                if (0 == strcmp(exposed_item_seen_list[k].bufname, analyzer_item->item_name))
+                    exposed_item_seen_list[k].item_seen_ptr = &analyzer_item->item_seen;
+            }
+
+        }
+        analyzer_item_map[analyzer_item->item_id] = (int16_t) i;
+    }
+
+    analyzer_init = true;
+}
 
 /**
  * \brief Prints analysis of loaded rules.
@@ -888,30 +1012,13 @@ void EngineAnalysisRules(const DetectEngineCtx *de_ctx,
     uint32_t rule_ipv6_only = 0;
     uint32_t rule_flowbits = 0;
     uint32_t rule_flowint = 0;
-    //uint32_t rule_flowvar = 0;
     uint32_t rule_content_http = 0;
     uint32_t rule_content_offset_depth = 0;
     int32_t list_id = 0;
     uint32_t rule_warning = 0;
-    uint32_t raw_http_buf = 0;
-    uint32_t norm_http_buf = 0;
     uint32_t stream_buf = 0;
     uint32_t packet_buf = 0;
-    uint32_t http_header_buf = 0;
-    uint32_t http_uri_buf = 0;
-    uint32_t http_method_buf = 0;
-    uint32_t http_cookie_buf = 0;
-    uint32_t http_client_body_buf = 0;
-    uint32_t http_server_body_buf = 0;
-    uint32_t http_stat_code_buf = 0;
-    uint32_t http_stat_msg_buf = 0;
-    uint32_t http_raw_header_buf = 0;
-    uint32_t http_raw_uri_buf = 0;
-    uint32_t http_ua_buf = 0;
-    uint32_t http_host_buf = 0;
-    uint32_t http_rawhost_buf = 0;
-    uint32_t http_headernames_buf = 0;
-    uint32_t http_referer_buf = 0;
+    uint32_t file_store = 0;
     uint32_t warn_pcre_no_content = 0;
     uint32_t warn_pcre_http_content = 0;
     uint32_t warn_pcre_http = 0;
@@ -924,27 +1031,17 @@ void EngineAnalysisRules(const DetectEngineCtx *de_ctx,
     uint32_t warn_method_serverbody = 0;
     uint32_t warn_pcre_method = 0;
     uint32_t warn_encoding_norm_http_buf = 0;
+    uint32_t warn_file_store_not_present = 0;
     uint32_t warn_offset_depth_pkt_stream = 0;
     uint32_t warn_offset_depth_alproto = 0;
     uint32_t warn_non_alproto_fp_for_alproto_sig = 0;
     uint32_t warn_no_direction = 0;
     uint32_t warn_both_direction = 0;
 
-    const int filedata_id = DetectBufferTypeGetByName("file_data");
-    const int httpmethod_id = DetectBufferTypeGetByName("http_method");
-    const int httpuri_id = DetectBufferTypeGetByName("http_uri");
-    const int httpuseragent_id = DetectBufferTypeGetByName("http_user_agent");
-    const int httpcookie_id = DetectBufferTypeGetByName("http_cookie");
-    const int httpstatcode_id = DetectBufferTypeGetByName("http_stat_code");
-    const int httpstatmsg_id = DetectBufferTypeGetByName("http_stat_msg");
-    const int httpheader_id = DetectBufferTypeGetByName("http_header");
-    const int httprawheader_id = DetectBufferTypeGetByName("http_raw_header");
-    const int httpclientbody_id = DetectBufferTypeGetByName("http_client_body");
-    const int httprawuri_id = DetectBufferTypeGetByName("http_raw_uri");
-    const int httphost_id = DetectBufferTypeGetByName("http_host");
-    const int httprawhost_id = DetectBufferTypeGetByName("http_raw_host");
-    const int httpreferer_id = DetectBufferTypeGetByName("http_referer");
-    const int httpheadernames_id = DetectBufferTypeGetByName("http_header_names");
+    EngineAnalysisItemsInit();
+
+    bool *http_method_item_seen_ptr = exposed_item_seen_list[0].item_seen_ptr;
+    bool *http_server_body_item_seen_ptr = exposed_item_seen_list[1].item_seen_ptr;
 
     if (s->init_data->init_flags & SIG_FLAG_INIT_BIDIREC) {
         rule_bidirectional = 1;
@@ -952,6 +1049,9 @@ void EngineAnalysisRules(const DetectEngineCtx *de_ctx,
 
     if (s->flags & SIG_FLAG_REQUIRE_PACKET) {
         packet_buf += 1;
+    }
+    if (s->flags & SIG_FLAG_FILESTORE) {
+        file_store += 1;
     }
     if (s->flags & SIG_FLAG_REQUIRE_STREAM) {
         stream_buf += 1;
@@ -967,177 +1067,35 @@ void EngineAnalysisRules(const DetectEngineCtx *de_ctx,
     for (list_id = 0; list_id < (int)s->init_data->smlists_array_size; list_id++) {
         SigMatch *sm = NULL;
         for (sm = s->init_data->smlists[list_id]; sm != NULL; sm = sm->next) {
+            int16_t item_slot = analyzer_item_map[list_id];
             if (sm->type == DETECT_PCRE) {
-                if (list_id == httpclientbody_id) {
-                    rule_pcre_http += 1;
-                    http_client_body_buf += 1;
-                    raw_http_buf += 1;
+                if (item_slot == -1) {
+                    rule_pcre++;
+                    continue;
                 }
-                else if (list_id == httpuri_id) {
-                    rule_pcre_http += 1;
-                    norm_http_buf += 1;
-                    http_uri_buf += 1;
-                }
-                else if (list_id == httpheader_id) {
-                    rule_pcre_http += 1;
-                    norm_http_buf += 1;
-                    http_header_buf += 1;
-                }
-                else if (list_id == httpcookie_id) {
-                    rule_pcre_http += 1;
-                    norm_http_buf += 1;
-                    http_cookie_buf += 1;
-                }
-                else if (list_id == filedata_id) {
-                    rule_pcre_http += 1;
-                    http_server_body_buf += 1;
-                    raw_http_buf += 1;
-                }
-                else if (list_id == httprawheader_id) {
-                    rule_pcre_http += 1;
-                    raw_http_buf += 1;
-                    http_raw_header_buf += 1;
-                }
-                else if (list_id == httpmethod_id) {
-                    rule_pcre_http += 1;
-                    raw_http_buf += 1;
-                    http_method_buf += 1;
-                }
-                else if (list_id == httprawuri_id) {
-                    rule_pcre_http += 1;
-                    raw_http_buf += 1;
-                    http_raw_uri_buf += 1;
-                }
-                else if (list_id == httpstatmsg_id) {
-                    rule_pcre_http += 1;
-                    raw_http_buf += 1;
-                    http_stat_msg_buf += 1;
-                }
-                else if (list_id == httpstatcode_id) {
-                    rule_pcre_http += 1;
-                    raw_http_buf += 1;
-                    http_stat_code_buf += 1;
-                }
-                else if (list_id == httpuseragent_id) {
-                    rule_pcre_http += 1;
-                    norm_http_buf += 1;
-                    http_ua_buf += 1;
-                }
-                else if (list_id == httphost_id) {
-                    rule_pcre_http += 1;
-                    norm_http_buf += 1;
-                    http_host_buf += 1;
-                }
-                else if (list_id == httprawhost_id) {
-                    rule_pcre_http += 1;
-                    raw_http_buf += 1;
-                    http_rawhost_buf += 1;
-                }
-                else if (list_id == httpheadernames_id) {
-                    rule_pcre_http += 1;
-                    raw_http_buf += 1;
-                    http_headernames_buf += 1;
-                }
-                else if (list_id == httpreferer_id) {
-                    rule_pcre_http += 1;
-                    raw_http_buf += 1;
-                    http_referer_buf += 1;
-                }
-                else {
-                    rule_pcre += 1;
-                }
-            }
-            else if (sm->type == DETECT_CONTENT) {
 
-                if (list_id == httpuri_id
-                          || list_id == httpheader_id
-                          || list_id == httpcookie_id) {
-                    rule_content_http += 1;
-                    norm_http_buf += 1;
+                rule_pcre_http++;
+                analyzer_items[item_slot].item_seen = true;
+            } else if (sm->type == DETECT_CONTENT) {
+                if (item_slot == -1) {
+                    rule_content++;
+                    if (list_id == DETECT_SM_LIST_PMATCH) {
+                        DetectContentData *cd = (DetectContentData *)sm->ctx;
+                        if (cd->flags & (DETECT_CONTENT_OFFSET | DETECT_CONTENT_DEPTH)) {
+                            rule_content_offset_depth++;
+                        }
+                    }
+                    continue;
+                }
+
+                rule_content_http++;
+                analyzer_items[item_slot].item_seen = true;
+
+                if (analyzer_items[item_slot].check_encoding_match) {
                     DetectContentData *cd = (DetectContentData *)sm->ctx;
                     if (cd != NULL && PerCentEncodingMatch(cd->content, cd->content_len) > 0) {
                         warn_encoding_norm_http_buf += 1;
-                        rule_warning += 1;
                     }
-                    if (list_id == httpuri_id) {
-                        http_uri_buf += 1;
-                    }
-                    else if (list_id == httpheader_id) {
-                        http_header_buf += 1;
-                    }
-                    else if (list_id == httpcookie_id) {
-                        http_cookie_buf += 1;
-                    }
-                }
-                else if (list_id == httpclientbody_id) {
-                    rule_content_http += 1;
-                    raw_http_buf += 1;
-                    http_client_body_buf += 1;
-                }
-                else if (list_id == filedata_id) {
-                    rule_content_http += 1;
-                    raw_http_buf += 1;
-                    http_server_body_buf += 1;
-                }
-                else if (list_id == httprawheader_id) {
-                    rule_content_http += 1;
-                    raw_http_buf += 1;
-                    http_raw_header_buf += 1;
-                }
-                else if (list_id == httprawuri_id) {
-                    rule_content_http += 1;
-                    raw_http_buf += 1;
-                    http_raw_uri_buf += 1;
-                }
-                else if (list_id == httpstatmsg_id) {
-                    rule_content_http += 1;
-                    raw_http_buf += 1;
-                    http_stat_msg_buf += 1;
-                }
-                else if (list_id == httpstatcode_id) {
-                    rule_content_http += 1;
-                    raw_http_buf += 1;
-                    http_stat_code_buf += 1;
-                }
-                else if (list_id == httpmethod_id) {
-                    rule_content_http += 1;
-                    raw_http_buf += 1;
-                    http_method_buf += 1;
-                }
-                else if (list_id == httphost_id) {
-                    rule_content_http += 1;
-                    raw_http_buf += 1;
-                    http_host_buf += 1;
-                }
-                else if (list_id == httpuseragent_id) {
-                    rule_content_http += 1;
-                    norm_http_buf += 1;
-                    http_ua_buf += 1;
-                }
-                else if (list_id == httprawhost_id) {
-                    rule_content_http += 1;
-                    raw_http_buf += 1;
-                    http_rawhost_buf += 1;
-                }
-                else if (list_id == httpheadernames_id) {
-                    rule_content_http += 1;
-                    raw_http_buf += 1;
-                    http_headernames_buf += 1;
-                }
-                else if (list_id == httpreferer_id) {
-                    rule_content_http += 1;
-                    raw_http_buf += 1;
-                    http_referer_buf += 1;
-                }
-                else if (list_id == DETECT_SM_LIST_PMATCH) {
-                    rule_content += 1;
-                    DetectContentData *cd = (DetectContentData *)sm->ctx;
-                    if (cd->flags &
-                        (DETECT_CONTENT_OFFSET | DETECT_CONTENT_DEPTH)) {
-                        rule_content_offset_depth++;
-                    }
-                } else {
-                    rule_content += 1;
                 }
             }
             else if (sm->type == DETECT_FLOW) {
@@ -1174,6 +1132,11 @@ void EngineAnalysisRules(const DetectEngineCtx *de_ctx,
 
     } /* for ( ; list_id < DETECT_SM_LIST_MAX; list_id++) */
 
+
+    if (file_store && !RequiresFeature("output::file-store")) {
+        rule_warning += 1;
+        warn_file_store_not_present = 1;
+    }
 
     if (rule_pcre > 0 && rule_content == 0 && rule_content_http == 0) {
         rule_warning += 1;
@@ -1218,12 +1181,13 @@ void EngineAnalysisRules(const DetectEngineCtx *de_ctx,
         rule_warning += 1;
         warn_direction = 1;
     }
-    if (http_method_buf) {
+
+    if (*http_method_item_seen_ptr) {
         if (rule_flow && rule_flow_toclient) {
             rule_warning += 1;
             warn_method_toclient = 1;
         }
-        if (http_server_body_buf) {
+        if (*http_server_body_item_seen_ptr) {
             rule_warning += 1;
             warn_method_serverbody = 1;
         }
@@ -1250,9 +1214,13 @@ void EngineAnalysisRules(const DetectEngineCtx *de_ctx,
         warn_no_direction += 1;
         rule_warning += 1;
     }
-    if ((s->flags & (SIG_FLAG_TOSERVER|SIG_FLAG_TOCLIENT)) == (SIG_FLAG_TOSERVER|SIG_FLAG_TOCLIENT)) {
-        warn_both_direction += 1;
-        rule_warning += 1;
+
+    /* No warning about direction for ICMP protos */
+    if (!(DetectProtoContainsProto(&s->proto, IPPROTO_ICMPV6) && DetectProtoContainsProto(&s->proto, IPPROTO_ICMP))) {
+        if ((s->flags & (SIG_FLAG_TOSERVER|SIG_FLAG_TOCLIENT)) == (SIG_FLAG_TOSERVER|SIG_FLAG_TOCLIENT)) {
+            warn_both_direction += 1;
+            rule_warning += 1;
+        }
     }
 
     if (!rule_warnings_only || (rule_warnings_only && rule_warning > 0)) {
@@ -1267,21 +1235,12 @@ void EngineAnalysisRules(const DetectEngineCtx *de_ctx,
         if (!rule_flow_nostream && stream_buf && (rule_flow || rule_flowbits || rule_content || rule_pcre)) {
             fprintf(rule_engine_analysis_FD, "    Rule matches on reassembled stream.\n");
         }
-        if (http_uri_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http uri buffer.\n");
-        if (http_header_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http header buffer.\n");
-        if (http_cookie_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http cookie buffer.\n");
-        if (http_raw_uri_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http raw uri buffer.\n");
-        if (http_raw_header_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http raw header buffer.\n");
-        if (http_method_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http method buffer.\n");
-        if (http_server_body_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http server body buffer.\n");
-        if (http_client_body_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http client body buffer.\n");
-        if (http_stat_msg_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http stat msg buffer.\n");
-        if (http_stat_code_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http stat code buffer.\n");
-        if (http_ua_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http user agent buffer.\n");
-        if (http_host_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http host buffer.\n");
-        if (http_rawhost_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http rawhost buffer.\n");
-        if (http_headernames_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http header names buffer.\n");
-        if (http_referer_buf) fprintf(rule_engine_analysis_FD, "    Rule matches on http header referer buffer.\n");
+        for(size_t i = 0; i < ARRAY_SIZE(analyzer_items); i++) {
+            DetectEngineAnalyzerItems *ai = &analyzer_items[i];
+            if (ai->item_seen) {
+                 fprintf(rule_engine_analysis_FD, "    Rule matches on %s buffer.\n", ai->display_name);
+            }
+        }
         if (s->alproto != ALPROTO_UNKNOWN) {
             fprintf(rule_engine_analysis_FD, "    App layer protocol is %s.\n", AppProtoToString(s->alproto));
         }
@@ -1376,6 +1335,9 @@ void EngineAnalysisRules(const DetectEngineCtx *de_ctx,
         }
         if (warn_both_direction) {
             fprintf(rule_engine_analysis_FD, "    Warning: Rule is inspecting both the request and the response.\n");
+        }
+        if (warn_file_store_not_present) {
+            fprintf(rule_engine_analysis_FD, "    Warning: Rule requires file-store but the output file-store is not enabled.\n");
         }
         if (rule_warning == 0) {
             fprintf(rule_engine_analysis_FD, "    No warnings for this rule.\n");

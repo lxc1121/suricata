@@ -144,6 +144,24 @@ Example::
 ``startswith`` cannot be mixed with ``depth``, ``offset``, ``within`` or
 ``distance`` for the same pattern.
 
+endswith
+--------
+
+The ``endswith`` keyword is similar to ``isdataat:!1,relative;``. It takes no
+arguments and must follow a ``content`` keyword. It modifies the ``content`` to
+match exactly at the end of a buffer.
+
+Example::
+
+    content:".php"; endswith;
+
+``endswith`` is a short hand notation for::
+
+    content:".php"; isdatat:!1,relative;
+
+``endswith`` cannot be mixed with ``offset``, ``within`` or
+``distance`` for the same pattern.
+
 offset
 ------
 
@@ -246,6 +264,21 @@ You can also use the negation (!) before isdataat.
 
 .. image:: payload-keywords/isdataat1.png
 
+bsize
+-----
+
+With the bsize keyword, you can match on the length of the buffer. This adds precision to the content match, previously this could have been done with isdataat.
+
+Format::
+
+  bsize:<number>;
+
+Example of bsize in a rule:
+
+.. container:: example-rule
+
+   alert dns any any -> any any (msg:"test bsize rule"; dns.query; content:"google.com"; bsize:10; sid:123; rev:1;)
+
 dsize
 -----
 
@@ -258,7 +291,7 @@ Format::
 
   dsize:<number>;
 
-example of dsize in a rule:
+Example of dsize in a rule:
 
 .. container:: example-rule
 
@@ -266,7 +299,11 @@ example of dsize in a rule:
 
 byte_test
 ---------
-The ``byte_test`` keyword extracts ``<num of bytes>`` and performs an operation selected with ``<operator>`` against the value in ``<test value>`` at a particular ``<offset>``.
+The ``byte_test`` keyword extracts ``<num of bytes>`` and performs an operation selected
+with ``<operator>`` against the value in ``<test value>`` at a particular ``<offset>``.
+The ``<bitmask value>`` is applied to the extracted bytes (before the operator is applied),
+and the final result will be right shifted one bit for each trailing ``0`` in
+the ``<bitmask value>``.
 
 Format::
   
@@ -299,7 +336,7 @@ Format::
 +----------------+------------------------------------------------------------------------------+
 | [string] <num> | 										|
 |		 | - hex - Converted string represented in hex					|
-|		 | - dec - Converted string represented in dedimal				|
+|		 | - dec - Converted string represented in decimal				|
 |		 | - oct - Converted string represented in octal				|
 +----------------+------------------------------------------------------------------------------+
 | [dce]		 | Allow the DCE module determine the byte order 				|
@@ -324,7 +361,7 @@ Example::
 
   alert tcp any any -> any any \ 
          (msg:"Byte_Test Example - Detect Large Values"; content:"|00 01 00 02|"; \
-         byte_test:2,>,1000,relavtive;)
+         byte_test:2,>,1000,relative;)
 
   alert tcp any any -> any any \
 	 (msg:"Byte_Test Example - Lowest bit is set"; \

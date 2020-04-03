@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -45,8 +45,7 @@
  */
 #define PARSE_REGEX  "^\\s*([0-9]{0,10})\\s*(?:,\\s*([0-9]{0,10}|[*])\\s*(?:,\\s*([0-9]{0,10}|[*]))?)?\\s*$"
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 static int DetectRpcMatch (DetectEngineThreadCtx *, Packet *,
         const Signature *, const SigMatchCtx *);
@@ -67,7 +66,7 @@ void DetectRpcRegister (void)
     sigmatch_table[DETECT_RPC].Free  = DetectRpcFree;
     sigmatch_table[DETECT_RPC].RegisterTests = DetectRpcRegisterTests;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
 /*
@@ -146,11 +145,10 @@ static DetectRpcData *DetectRpcParse (const char *rpcstr)
 {
     DetectRpcData *rd = NULL;
     char *args[3] = {NULL,NULL,NULL};
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
 
-    ret = pcre_exec(parse_regex, parse_regex_study, rpcstr, strlen(rpcstr), 0, 0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, rpcstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret < 1 || ret > 4) {
         SCLogError(SC_ERR_PCRE_MATCH, "parse error, ret %" PRId32 ", string %s", ret, rpcstr);
         goto error;
@@ -196,7 +194,7 @@ static DetectRpcData *DetectRpcParse (const char *rpcstr)
         if (args[i]) {
             switch (i) {
                 case 0:
-                    if (ByteExtractStringUint32(&rd->program, 10, strlen(args[i]), args[i]) <= 0) {
+                    if (StringParseUint32(&rd->program, 10, strlen(args[i]), args[i]) <= 0) {
                         SCLogError(SC_ERR_INVALID_ARGUMENT, "Invalid size specified for the rpc program:\"%s\"", args[i]);
                         goto error;
                     }
@@ -204,7 +202,7 @@ static DetectRpcData *DetectRpcParse (const char *rpcstr)
                     break;
                 case 1:
                     if (args[i][0] != '*') {
-                        if (ByteExtractStringUint32(&rd->program_version, 10, strlen(args[i]), args[i]) <= 0) {
+                        if (StringParseUint32(&rd->program_version, 10, strlen(args[i]), args[i]) <= 0) {
                             SCLogError(SC_ERR_INVALID_ARGUMENT, "Invalid size specified for the rpc version:\"%s\"", args[i]);
                             goto error;
                         }
@@ -213,7 +211,7 @@ static DetectRpcData *DetectRpcParse (const char *rpcstr)
                     break;
                 case 2:
                     if (args[i][0] != '*') {
-                        if (ByteExtractStringUint32(&rd->procedure, 10, strlen(args[i]), args[i]) <= 0) {
+                        if (StringParseUint32(&rd->procedure, 10, strlen(args[i]), args[i]) <= 0) {
                             SCLogError(SC_ERR_INVALID_ARGUMENT, "Invalid size specified for the rpc procedure:\"%s\"", args[i]);
                             goto error;
                         }

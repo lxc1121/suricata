@@ -1,4 +1,4 @@
-/* Copyright (C) 2015-2019 Open Information Security Foundation
+/* Copyright (C) 2015-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -29,16 +29,13 @@
 #include "detect-engine-content-inspection.h"
 #include "detect-snmp-pdu_type.h"
 #include "app-layer-parser.h"
-
-#include "rust-snmp-snmp-gen.h"
-#include "rust-snmp-detect-gen.h"
+#include "rust.h"
 
 /**
  *   [snmp.pdu_type]:<type>;
  */
 #define PARSE_REGEX "^\\s*([0-9]+)\\s*$"
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 typedef struct DetectSNMPPduTypeData_ {
     uint32_t pdu_type;
@@ -65,8 +62,8 @@ static int DetectSNMPPduTypeMatch (DetectEngineThreadCtx *, Flow *,
 void DetectSNMPPduTypeRegister(void)
 {
     sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].name = "snmp.pdu_type";
-    sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].desc = "match SNMP Pdu type";
-    sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].url = DOC_URL DOC_VERSION "/rules/snmp-keywords.html#snmp.pdu_type";
+    sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].desc = "match SNMP PDU type";
+    sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].url = DOC_URL DOC_VERSION "/rules/snmp-keywords.html#snmp-pdu-type";
     sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].Match = NULL;
     sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].AppLayerTxMatch = DetectSNMPPduTypeMatch;
     sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].Setup = DetectSNMPPduTypeSetup;
@@ -74,9 +71,8 @@ void DetectSNMPPduTypeRegister(void)
 #ifdef UNITTESTS
     sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].RegisterTests = DetectSNMPPduTypeRegisterTests;
 #endif
-    sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].flags |= SIGMATCH_NOOPT;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 
     DetectAppLayerInspectEngineRegister("snmp.pdu_type",
             ALPROTO_SNMP, SIG_FLAG_TOSERVER, 0,
@@ -144,14 +140,12 @@ static int DetectSNMPPduTypeMatch (DetectEngineThreadCtx *det_ctx,
 static DetectSNMPPduTypeData *DetectSNMPPduTypeParse (const char *rawstr)
 {
     DetectSNMPPduTypeData *dd = NULL;
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
     char value1[20] = "";
     char *endptr = NULL;
 
-    ret = pcre_exec(parse_regex, parse_regex_study, rawstr, strlen(rawstr), 0,
-                    0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, rawstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret != 2) {
         SCLogError(SC_ERR_PCRE_MATCH, "Parse error %s", rawstr);
         goto error;

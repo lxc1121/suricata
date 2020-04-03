@@ -28,7 +28,7 @@
  * example we have DecodeIPV4() for IPv4 and DecodePPP() for
  * PPP.
  *
- * These functions have all a pkt and and a len argument which
+ * These functions have all a pkt and a len argument which
  * are respectively a pointer to the protocol data and the length
  * of this protocol data.
  *
@@ -68,27 +68,30 @@
 #include "output-flow.h"
 #include "flow-storage.h"
 
+uint32_t default_packet_size = 0;
 extern bool stats_decoder_events;
-const char *stats_decoder_events_prefix;
+extern const char *stats_decoder_events_prefix;
 extern bool stats_stream_events;
 
 int DecodeTunnel(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
-        uint8_t *pkt, uint32_t len, PacketQueue *pq, enum DecodeTunnelProto proto)
+        const uint8_t *pkt, uint32_t len, enum DecodeTunnelProto proto)
 {
     switch (proto) {
         case DECODE_TUNNEL_PPP:
-            return DecodePPP(tv, dtv, p, pkt, len, pq);
+            return DecodePPP(tv, dtv, p, pkt, len);
         case DECODE_TUNNEL_IPV4:
-            return DecodeIPV4(tv, dtv, p, pkt, len, pq);
+            return DecodeIPV4(tv, dtv, p, pkt, len);
         case DECODE_TUNNEL_IPV6:
         case DECODE_TUNNEL_IPV6_TEREDO:
-            return DecodeIPV6(tv, dtv, p, pkt, len, pq);
+            return DecodeIPV6(tv, dtv, p, pkt, len);
         case DECODE_TUNNEL_VLAN:
-            return DecodeVLAN(tv, dtv, p, pkt, len, pq);
+            return DecodeVLAN(tv, dtv, p, pkt, len);
         case DECODE_TUNNEL_ETHERNET:
-            return DecodeEthernet(tv, dtv, p, pkt, len, pq);
-        case DECODE_TUNNEL_ERSPAN:
-            return DecodeERSPAN(tv, dtv, p, pkt, len, pq);
+            return DecodeEthernet(tv, dtv, p, pkt, len);
+        case DECODE_TUNNEL_ERSPANII:
+            return DecodeERSPAN(tv, dtv, p, pkt, len);
+        case DECODE_TUNNEL_ERSPANI:
+            return DecodeERSPANTypeI(tv, dtv, p, pkt, len);
         default:
             SCLogDebug("FIXME: DecodeTunnel: protocol %" PRIu32 " not supported.", proto);
             break;
@@ -109,7 +112,7 @@ void PacketFree(Packet *p)
  * \brief Finalize decoding of a packet
  *
  * This function needs to be call at the end of decode
- * functions when decoding has been succesful.
+ * functions when decoding has been successful.
  *
  */
 void PacketDecodeFinalize(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p)
@@ -215,7 +218,7 @@ inline int PacketCallocExtPkt(Packet *p, int datalen)
  *  \param Pointer to the data to copy
  *  \param Length of the data to copy
  */
-inline int PacketCopyDataOffset(Packet *p, uint32_t offset, uint8_t *data, uint32_t datalen)
+inline int PacketCopyDataOffset(Packet *p, uint32_t offset, const uint8_t *data, uint32_t datalen)
 {
     if (unlikely(offset + datalen > MAX_PAYLOAD_SIZE)) {
         /* too big */
@@ -256,7 +259,7 @@ inline int PacketCopyDataOffset(Packet *p, uint32_t offset, uint8_t *data, uint3
  *  \param Pointer to the data to copy
  *  \param Length of the data to copy
  */
-inline int PacketCopyData(Packet *p, uint8_t *pktdata, uint32_t pktlen)
+inline int PacketCopyData(Packet *p, const uint8_t *pktdata, uint32_t pktlen)
 {
     SET_PKT_LEN(p, (size_t)pktlen);
     return PacketCopyDataOffset(p, 0, pktdata, pktlen);
@@ -273,8 +276,7 @@ inline int PacketCopyData(Packet *p, uint8_t *pktdata, uint32_t pktlen)
  *  \retval p the pseudo packet or NULL if out of memory
  */
 Packet *PacketTunnelPktSetup(ThreadVars *tv, DecodeThreadVars *dtv, Packet *parent,
-                             uint8_t *pkt, uint32_t len, enum DecodeTunnelProto proto,
-                             PacketQueue *pq)
+                             const uint8_t *pkt, uint32_t len, enum DecodeTunnelProto proto)
 {
     int ret;
 
@@ -286,7 +288,7 @@ Packet *PacketTunnelPktSetup(ThreadVars *tv, DecodeThreadVars *dtv, Packet *pare
         SCReturnPtr(NULL, "Packet");
     }
 
-    /* copy packet and set lenght, proto */
+    /* copy packet and set length, proto */
     PacketCopyData(p, pkt, len);
     p->recursion_level = parent->recursion_level + 1;
     p->ts.tv_sec = parent->ts.tv_sec;
@@ -304,7 +306,7 @@ Packet *PacketTunnelPktSetup(ThreadVars *tv, DecodeThreadVars *dtv, Packet *pare
     SET_TUNNEL_PKT(p);
 
     ret = DecodeTunnel(tv, dtv, p, GET_PKT_DATA(p),
-                       GET_PKT_LEN(p), pq, proto);
+                       GET_PKT_LEN(p), proto);
 
     if (unlikely(ret != TM_ECODE_OK) ||
             (proto == DECODE_TUNNEL_IPV6_TEREDO && (p->flags & PKT_IS_INVALID)))
@@ -346,7 +348,7 @@ Packet *PacketTunnelPktSetup(ThreadVars *tv, DecodeThreadVars *dtv, Packet *pare
  *
  *  \retval p the pseudo packet or NULL if out of memory
  */
-Packet *PacketDefragPktSetup(Packet *parent, uint8_t *pkt, uint32_t len, uint8_t proto)
+Packet *PacketDefragPktSetup(Packet *parent, const uint8_t *pkt, uint32_t len, uint8_t proto)
 {
     SCEnter();
 
@@ -376,13 +378,14 @@ Packet *PacketDefragPktSetup(Packet *parent, uint8_t *pkt, uint32_t len, uint8_t
     p->vlan_id[0] = parent->vlan_id[0];
     p->vlan_id[1] = parent->vlan_id[1];
     p->vlan_idx = parent->vlan_idx;
+    p->livedev = parent->livedev;
 
     SCReturnPtr(p, "Packet");
 }
 
 /**
  *  \brief inform defrag "parent" that a pseudo packet is
- *         now assosiated to it.
+ *         now associated to it.
  */
 void PacketDefragPktSetupParent(Packet *parent)
 {
@@ -400,6 +403,7 @@ void PacketDefragPktSetupParent(Packet *parent)
 
 void PacketBypassCallback(Packet *p)
 {
+#ifdef CAPTURE_OFFLOAD
     /* Don't try to bypass if flow is already out or
      * if we have failed to do it once */
     if (p->flow) {
@@ -424,6 +428,14 @@ void PacketBypassCallback(Packet *p)
             FlowUpdateState(p->flow, FLOW_STATE_LOCAL_BYPASSED);
         }
     }
+#else /* CAPTURE_OFFLOAD */
+    if (p->flow) {
+        int state = SC_ATOMIC_GET(p->flow->flow_state);
+        if (state == FLOW_STATE_LOCAL_BYPASSED)
+            return;
+        FlowUpdateState(p->flow, FLOW_STATE_LOCAL_BYPASSED);
+    }
+#endif
 }
 
 /** \brief switch direction of a packet */
@@ -538,7 +550,7 @@ void DecodeRegisterPerfCounters(DecodeThreadVars *dtv, ThreadVars *tv)
             }
 
             char name[256];
-            char *dot = index(DEvents[i].event_name, '.');
+            char *dot = strchr(DEvents[i].event_name, '.');
             BUG_ON(!dot);
             snprintf(name, sizeof(name), "%s.%s",
                     stats_decoder_events_prefix, dot+1);
@@ -635,19 +647,20 @@ void DecodeThreadVarsFree(ThreadVars *tv, DecodeThreadVars *dtv)
 }
 
 /**
- * \brief Set data for Packet and set length when zeo copy is used
+ * \brief Set data for Packet and set length when zero copy is used
  *
  *  \param Pointer to the Packet to modify
  *  \param Pointer to the data
  *  \param Length of the data
  */
-inline int PacketSetData(Packet *p, uint8_t *pktdata, uint32_t pktlen)
+inline int PacketSetData(Packet *p, const uint8_t *pktdata, uint32_t pktlen)
 {
     SET_PKT_LEN(p, (size_t)pktlen);
     if (unlikely(!pktdata)) {
         return -1;
     }
-    p->ext_pkt = pktdata;
+    // ext_pkt cannot be const (because we sometimes copy)
+    p->ext_pkt = (uint8_t *) pktdata;
     p->flags |= PKT_ZERO_COPY;
 
     return 0;
@@ -675,9 +688,6 @@ const char *PktSrcToString(enum PktSrcEnum pkt_src)
         case PKT_SRC_DEFRAG:
             pkt_src_str = "defrag";
             break;
-        case PKT_SRC_STREAM_TCP_STREAM_END_PSEUDO:
-            pkt_src_str = "stream";
-            break;
         case PKT_SRC_STREAM_TCP_DETECTLOG_FLUSH:
             pkt_src_str = "stream (detect/log)";
             break;
@@ -686,6 +696,12 @@ const char *PktSrcToString(enum PktSrcEnum pkt_src)
             break;
         case PKT_SRC_DECODER_VXLAN:
             pkt_src_str = "vxlan encapsulation";
+            break;
+        case PKT_SRC_DETECT_RELOAD_FLUSH:
+            pkt_src_str = "detect reload flush";
+            break;
+        case PKT_SRC_CAPTURE_TIMEOUT:
+            pkt_src_str = "capture timeout flush";
             break;
     }
     return pkt_src_str;

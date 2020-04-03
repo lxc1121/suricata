@@ -34,9 +34,7 @@
 #include "detect-engine-content-inspection.h"
 #include "detect-snmp-community.h"
 #include "app-layer-parser.h"
-
-#include "rust-snmp-snmp-gen.h"
-#include "rust-snmp-detect-gen.h"
+#include "rust.h"
 
 static int DetectSNMPCommunitySetup(DetectEngineCtx *, Signature *,
     const char *);
@@ -53,13 +51,13 @@ void DetectSNMPCommunityRegister(void)
 {
     sigmatch_table[DETECT_AL_SNMP_COMMUNITY].name = "snmp.community";
     sigmatch_table[DETECT_AL_SNMP_COMMUNITY].desc =
-        "SNMP content modififier to match on the SNMP community";
+        "SNMP content modifier to match on the SNMP community";
     sigmatch_table[DETECT_AL_SNMP_COMMUNITY].Setup =
         DetectSNMPCommunitySetup;
 #ifdef UNITTESTS
     sigmatch_table[DETECT_AL_SNMP_COMMUNITY].RegisterTests = DetectSNMPCommunityRegisterTests;
 #endif
-    sigmatch_table[DETECT_AL_SNMP_COMMUNITY].url = DOC_URL DOC_VERSION "/rules/snmp-keywords.html#snmp.community";
+    sigmatch_table[DETECT_AL_SNMP_COMMUNITY].url = DOC_URL DOC_VERSION "/rules/snmp-keywords.html#snmp-community";
 
     sigmatch_table[DETECT_AL_SNMP_COMMUNITY].flags |= SIGMATCH_NOOPT|SIGMATCH_INFO_STICKY_BUFFER;
 

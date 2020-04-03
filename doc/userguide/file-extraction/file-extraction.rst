@@ -66,6 +66,19 @@ of the filename. For example, if the SHA256 hex string of an extracted
 file starts with "f9bc6d..." the file we be placed in the directory
 `filestore/f9`.
 
+
+The size of a file that can be stored depends on ``file-store.stream-depth``,
+if this value is reached a file can be truncated and might not be stored completely.
+If not enabled, ``stream.reassembly.depth`` will be considered.
+
+Setting ``file-store.stream-depth`` to 0 permits to store any files.
+
+``file-store.stream-depth`` will always override ``stream.reassembly.depth``
+when filestore keyword is used.
+
+A protocol parser, like modbus, could permit to set a different
+store-depth value and use it rather than ``file-store.stream-depth``.
+
 Using the SHA256 for file names allows for automatic de-duplication of
 extracted files. However, the timestamp of a pre-existing file will be
 updated if the same files is extracted again, similar to the `touch`
@@ -95,21 +108,23 @@ configuring the file-store output.
 File-Store (Version 1)
 ----------------------
 
-File-store version 1 has been replaced by version 2 and is no longer
-recommended.
+.. note:: File-store version 1 has been deprecated and will be removed
+          by June 2020. Please use file-store v2 instead. Please see
+          the `deprecation policy`_ for more information.
 
 ::
 
   - file-store:
-      enabled: yes      # set to yes to enable
-      log-dir: files    # directory to store the files
-      force-magic: no   # force logging magic on all stored files
-      force-hash: [md5] # force logging of md5 checksums
-      stream-depth: 1mb # reassemble 1mb into a stream, set to no to disable
-      waldo: file.waldo # waldo file to store the file_id across runs
-      max-open-files: 0 # how many files to keep open (O means none)
-      write-meta: yes   # write a .meta file if set to yes
-      include-pid: yes  # include the pid in filenames if set to yes.
+      enabled: yes        # set to yes to enable
+      log-dir: files      # directory to store the files
+      force-magic: no     # force logging magic on all stored files
+      force-hash: [md5]   # force logging of md5 checksums
+      force-filestore: no # force storing of all files
+      stream-depth: 1mb   # reassemble 1mb into a stream, set to no to disable
+      waldo: file.waldo   # waldo file to store the file_id across runs
+      max-open-files: 0   # how many files to keep open (O means none)
+      write-meta: yes     # write a .meta file if set to yes
+      include-pid: yes    # include the pid in filenames if set to yes.
 
 Each file that is stored will have a name "file.<id>". The id will be reset and files will be overwritten unless the waldo option is used. A "file.<id>.meta" file is generated containing file metadata if write-meta is set to yes (default). If the include-pid option is set, the files will instead have a name "file.<pid>.<id>", and metafiles will be "file.<pid>.<id>.meta". Files will additionally have the suffix ".tmp" while they are open, which is only removed when they are finalized.
 
@@ -179,3 +194,5 @@ Suricata can calculate MD5 checksums of files on the fly and log them. See :doc:
 
    md5
    public-sha1-md5-data-sets
+
+.. _deprecation policy: https://suricata-ids.org/about/deprecation-policy/

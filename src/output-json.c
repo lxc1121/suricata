@@ -66,21 +66,6 @@
 
 #include "source-pcap-file.h"
 
-#ifndef HAVE_LIBJANSSON
-
-/** Handle the case where no JSON support is compiled in.
- *
- */
-
-int OutputJsonOpenFileCtx(LogFileCtx *, char *);
-
-void OutputJsonRegister (void)
-{
-    SCLogDebug("Can't register JSON output - JSON support was disabled during build.");
-}
-
-#else /* implied we do have JSON support */
-
 #define DEFAULT_LOG_FILENAME "eve.json"
 #define DEFAULT_ALERT_SYSLOG_FACILITY_STR       "local0"
 #define DEFAULT_ALERT_SYSLOG_FACILITY           LOG_LOCAL0
@@ -1021,7 +1006,7 @@ OutputInitResult OutputJsonInitCtx(ConfNode *conf)
 
         const char *sensor_id_s = ConfNodeLookupChildValue(conf, "sensor-id");
         if (sensor_id_s != NULL) {
-            if (ByteExtractStringUint64((uint64_t *)&sensor_id, 10, 0, sensor_id_s) == -1) {
+            if (StringParseUint64((uint64_t *)&sensor_id, 10, 0, sensor_id_s) < 0) {
                 SCLogError(SC_ERR_INVALID_ARGUMENT,
                            "Failed to initialize JSON output, "
                            "invalid sensor-id: %s", sensor_id_s);
@@ -1048,8 +1033,8 @@ OutputInitResult OutputJsonInitCtx(ConfNode *conf)
         }
         const char *cid_seed = ConfNodeLookupChildValue(conf, "community-id-seed");
         if (cid_seed != NULL) {
-            if (ByteExtractStringUint16(&json_ctx->cfg.community_id_seed,
-                        10, 0, cid_seed) == -1)
+            if (StringParseUint16(&json_ctx->cfg.community_id_seed,
+                        10, 0, cid_seed) < 0)
             {
                 SCLogError(SC_ERR_INVALID_ARGUMENT,
                            "Failed to initialize JSON output, "
@@ -1070,7 +1055,8 @@ OutputInitResult OutputJsonInitCtx(ConfNode *conf)
         const char *pcapfile_s = ConfNodeLookupChildValue(conf, "pcap-file");
         if (pcapfile_s != NULL && ConfValIsTrue(pcapfile_s)) {
             json_ctx->file_ctx->is_pcap_offline =
-                (RunmodeGetCurrent() == RUNMODE_PCAP_FILE);
+                (RunmodeGetCurrent() == RUNMODE_PCAP_FILE ||
+                 RunmodeGetCurrent() == RUNMODE_UNIX_SOCKET);
         }
 
         json_ctx->file_ctx->type = json_ctx->json_out;
@@ -1100,5 +1086,3 @@ static void OutputJsonDeInitCtx(OutputCtx *output_ctx)
     SCFree(json_ctx);
     SCFree(output_ctx);
 }
-
-#endif

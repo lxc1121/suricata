@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -54,8 +54,7 @@ SC_ATOMIC_EXTERN(unsigned int, num_tags);
 /* format: tag: <type>, <count>, <metric>, [direction]; */
 #define PARSE_REGEX  "^\\s*(host|session)\\s*(,\\s*(\\d+)\\s*,\\s*(packets|bytes|seconds)\\s*(,\\s*(src|dst))?\\s*)?$"
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 static int DetectTagMatch(DetectEngineThreadCtx *, Packet *,
         const Signature *, const SigMatchCtx *);
@@ -75,7 +74,7 @@ void DetectTagRegister(void)
     sigmatch_table[DETECT_TAG].RegisterTests = DetectTagRegisterTests;
     sigmatch_table[DETECT_TAG].flags |= SIGMATCH_IPONLY_COMPAT;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
 /**
@@ -154,12 +153,11 @@ static int DetectTagMatch(DetectEngineThreadCtx *det_ctx, Packet *p,
 static DetectTagData *DetectTagParse(const char *tagstr)
 {
     DetectTagData td;
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
     const char *str_ptr = NULL;
 
-    ret = pcre_exec(parse_regex, parse_regex_study, tagstr, strlen(tagstr), 0, 0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, tagstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret < 1) {
         SCLogError(SC_ERR_PCRE_MATCH, "parse error, ret %" PRId32 ", string %s", ret, tagstr);
         goto error;
@@ -196,7 +194,7 @@ static DetectTagData *DetectTagParse(const char *tagstr)
         }
 
         /* count */
-        if (ByteExtractStringUint32(&td.count, 10, strlen(str_ptr),
+        if (StringParseUint32(&td.count, 10, strlen(str_ptr),
                     str_ptr) <= 0) {
             SCLogError(SC_ERR_INVALID_VALUE, "Invalid argument for count. Must be a value in the range of 0 to %"PRIu32" (%s)", UINT32_MAX, tagstr);
             goto error;

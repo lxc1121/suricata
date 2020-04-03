@@ -49,7 +49,7 @@ static int DetectAckMatch(DetectEngineThreadCtx *,
 static void DetectAckRegisterTests(void);
 static void DetectAckFree(void *);
 static int PrefilterSetupTcpAck(DetectEngineCtx *de_ctx, SigGroupHead *sgh);
-static _Bool PrefilterTcpAckIsPrefilterable(const Signature *s);
+static bool PrefilterTcpAckIsPrefilterable(const Signature *s);
 
 void DetectAckRegister(void)
 {
@@ -119,7 +119,7 @@ static int DetectAckSetup(DetectEngineCtx *de_ctx, Signature *s, const char *opt
 
     sm->type = DETECT_ACK;
 
-    if (-1 == ByteExtractStringUint32(&data->ack, 10, 0, optstr)) {
+    if (StringParseUint32(&data->ack, 10, 0, optstr) < 0) {
         goto error;
     }
     sm->ctx = (SigMatchCtx*)data;
@@ -175,7 +175,7 @@ PrefilterPacketAckSet(PrefilterPacketHeaderValue *v, void *smctx)
     v->u32[0] = a->ack;
 }
 
-static _Bool
+static bool
 PrefilterPacketAckCompare(PrefilterPacketHeaderValue v, void *smctx)
 {
     const DetectAckData *a = smctx;
@@ -192,7 +192,7 @@ static int PrefilterSetupTcpAck(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
         PrefilterPacketAckMatch);
 }
 
-static _Bool PrefilterTcpAckIsPrefilterable(const Signature *s)
+static bool PrefilterTcpAckIsPrefilterable(const Signature *s)
 {
     const SigMatch *sm;
     for (sm = s->init_data->smlists[DETECT_SM_LIST_MATCH] ; sm != NULL; sm = sm->next) {

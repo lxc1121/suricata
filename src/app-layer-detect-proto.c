@@ -187,7 +187,7 @@ static AppProto AppLayerProtoDetectPMMatchSignature(
         const AppLayerProtoDetectPMSignature *s,
         AppLayerProtoDetectThreadCtx *tctx,
         Flow *f, uint8_t direction,
-        uint8_t *buf, uint16_t buflen, uint16_t searchlen,
+        const uint8_t *buf, uint16_t buflen, uint16_t searchlen,
         bool *rflow)
 {
     SCEnter();
@@ -203,7 +203,7 @@ static AppProto AppLayerProtoDetectPMMatchSignature(
         SCReturnUInt(ALPROTO_UNKNOWN);
     }
 
-    uint8_t *sbuf = buf + s->cd->offset;
+    const uint8_t *sbuf = buf + s->cd->offset;
     uint16_t ssearchlen = s->cd->depth - s->cd->offset;
     SCLogDebug("s->co->offset (%"PRIu16") s->cd->depth (%"PRIu16")",
                s->cd->offset, s->cd->depth);
@@ -262,7 +262,7 @@ static inline int PMGetProtoInspect(
         AppLayerProtoDetectThreadCtx *tctx,
         AppLayerProtoDetectPMCtx *pm_ctx,
         MpmThreadCtx *mpm_tctx,
-        Flow *f, uint8_t *buf, uint16_t buflen,
+        Flow *f, const uint8_t *buf, uint16_t buflen,
         uint8_t direction, AppProto *pm_results, bool *rflow)
 {
     int pm_matches = 0;
@@ -316,7 +316,7 @@ static inline int PMGetProtoInspect(
  *  \param pm_results[out] AppProto array of size ALPROTO_MAX */
 static AppProto AppLayerProtoDetectPMGetProto(
         AppLayerProtoDetectThreadCtx *tctx,
-        Flow *f, uint8_t *buf, uint16_t buflen,
+        Flow *f, const uint8_t *buf, uint16_t buflen,
         uint8_t direction, AppProto *pm_results, bool *rflow)
 {
     SCEnter();
@@ -447,7 +447,7 @@ static AppProto AppLayerProtoDetectPEGetProto(Flow *f, uint8_t ipproto,
 static inline AppProto PPGetProto(
         const AppLayerProtoDetectProbingParserElement *pe,
         Flow *f, uint8_t direction,
-        uint8_t *buf, uint32_t buflen,
+        const uint8_t *buf, uint32_t buflen,
         uint32_t *alproto_masks, uint8_t *rdir
 )
 {
@@ -485,7 +485,7 @@ static inline AppProto PPGetProto(
  *
  */
 static AppProto AppLayerProtoDetectPPGetProto(Flow *f,
-        uint8_t *buf, uint32_t buflen,
+        const uint8_t *buf, uint32_t buflen,
         uint8_t ipproto, const uint8_t idir,
         bool *reverse_flow)
 {
@@ -837,8 +837,6 @@ static void AppLayerProtoDetectPrintProbingParsers(AppLayerProtoDetectProbingPar
                         printf("            alproto: ALPROTO_SSH\n");
                     else if (pp_pe->alproto == ALPROTO_IMAP)
                         printf("            alproto: ALPROTO_IMAP\n");
-                    else if (pp_pe->alproto == ALPROTO_MSN)
-                        printf("            alproto: ALPROTO_MSN\n");
                     else if (pp_pe->alproto == ALPROTO_JABBER)
                         printf("            alproto: ALPROTO_JABBER\n");
                     else if (pp_pe->alproto == ALPROTO_SMB)
@@ -867,8 +865,12 @@ static void AppLayerProtoDetectPrintProbingParsers(AppLayerProtoDetectProbingPar
                         printf("            alproto: ALPROTO_DHCP\n");
                     else if (pp_pe->alproto == ALPROTO_SNMP)
                         printf("            alproto: ALPROTO_SNMP\n");
+                    else if (pp_pe->alproto == ALPROTO_SIP)
+                        printf("            alproto: ALPROTO_SIP\n");
                     else if (pp_pe->alproto == ALPROTO_TEMPLATE_RUST)
                         printf("            alproto: ALPROTO_TEMPLATE_RUST\n");
+                    else if (pp_pe->alproto == ALPROTO_RFB)
+                        printf("            alproto: ALPROTO_RFB\n");
                     else if (pp_pe->alproto == ALPROTO_TEMPLATE)
                         printf("            alproto: ALPROTO_TEMPLATE\n");
                     else if (pp_pe->alproto == ALPROTO_DNP3)
@@ -910,8 +912,6 @@ static void AppLayerProtoDetectPrintProbingParsers(AppLayerProtoDetectProbingPar
                     printf("            alproto: ALPROTO_SSH\n");
                 else if (pp_pe->alproto == ALPROTO_IMAP)
                     printf("            alproto: ALPROTO_IMAP\n");
-                else if (pp_pe->alproto == ALPROTO_MSN)
-                    printf("            alproto: ALPROTO_MSN\n");
                 else if (pp_pe->alproto == ALPROTO_JABBER)
                     printf("            alproto: ALPROTO_JABBER\n");
                 else if (pp_pe->alproto == ALPROTO_SMB)
@@ -940,8 +940,12 @@ static void AppLayerProtoDetectPrintProbingParsers(AppLayerProtoDetectProbingPar
                     printf("            alproto: ALPROTO_DHCP\n");
                 else if (pp_pe->alproto == ALPROTO_SNMP)
                     printf("            alproto: ALPROTO_SNMP\n");
+                else if (pp_pe->alproto == ALPROTO_SIP)
+                    printf("            alproto: ALPROTO_SIP\n");
                 else if (pp_pe->alproto == ALPROTO_TEMPLATE_RUST)
                     printf("            alproto: ALPROTO_TEMPLATE_RUST\n");
+                else if (pp_pe->alproto == ALPROTO_RFB)
+                    printf("            alproto: ALPROTO_RFB\n");
                 else if (pp_pe->alproto == ALPROTO_TEMPLATE)
                     printf("            alproto: ALPROTO_TEMPLATE\n");
                 else if (pp_pe->alproto == ALPROTO_DNP3)
@@ -1488,7 +1492,7 @@ static int AppLayerProtoDetectPMRegisterPattern(uint8_t ipproto, AppProto alprot
 
 AppProto AppLayerProtoDetectGetProto(AppLayerProtoDetectThreadCtx *tctx,
                                      Flow *f,
-                                     uint8_t *buf, uint32_t buflen,
+                                     const uint8_t *buf, uint32_t buflen,
                                      uint8_t ipproto, uint8_t direction,
                                      bool *reverse_flow)
 {
@@ -1897,9 +1901,6 @@ int AppLayerProtoDetectConfProtoDetectionEnabled(const char *ipproto,
     ConfNode *node;
     int r;
 
-#ifdef AFLFUZZ_APPLAYER
-    goto enabled;
-#endif
     if (RunmodeIsUnittests())
         goto enabled;
 
@@ -2912,7 +2913,7 @@ static int AppLayerProtoDetectPPTestData(AppLayerProtoDetectProbingParser *pp,
 }
 
 static uint16_t ProbingParserDummyForTesting(Flow *f, uint8_t direction,
-                                             uint8_t *input,
+                                             const uint8_t *input,
                                              uint32_t input_len, uint8_t *rdir)
 {
     return 0;

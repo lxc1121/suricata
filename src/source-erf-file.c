@@ -68,9 +68,9 @@ TmEcode ReceiveErfFileThreadInit(ThreadVars *, const void *, void **);
 void ReceiveErfFileThreadExitStats(ThreadVars *, void *);
 TmEcode ReceiveErfFileThreadDeinit(ThreadVars *, void *);
 
-TmEcode DecodeErfFileThreadInit(ThreadVars *, const void *, void **);
-TmEcode DecodeErfFileThreadDeinit(ThreadVars *tv, void *data);
-TmEcode DecodeErfFile(ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
+static TmEcode DecodeErfFileThreadInit(ThreadVars *, const void *, void **);
+static TmEcode DecodeErfFileThreadDeinit(ThreadVars *tv, void *data);
+static TmEcode DecodeErfFile(ThreadVars *, Packet *, void *);
 
 /**
  * \brief Register the ERF file receiver (reader) module.
@@ -275,20 +275,17 @@ TmEcode DecodeErfFileThreadDeinit(ThreadVars *tv, void *data)
  * off to the ethernet decoder.
  */
 TmEcode
-DecodeErfFile(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, PacketQueue *postpq)
+DecodeErfFile(ThreadVars *tv, Packet *p, void *data)
 {
     SCEnter();
     DecodeThreadVars *dtv = (DecodeThreadVars *)data;
 
-    /* XXX HACK: flow timeout can call us for injected pseudo packets
-     *           see bug: https://redmine.openinfosecfoundation.org/issues/1107 */
-    if (p->flags & PKT_PSEUDO_STREAM_END)
-        return TM_ECODE_OK;
+    BUG_ON(PKT_IS_PSEUDOPKT(p));
 
     /* Update counters. */
     DecodeUpdatePacketCounters(tv, dtv, p);
 
-    DecodeEthernet(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
+    DecodeEthernet(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p));
 
     PacketDecodeFinalize(tv, dtv, p);
 

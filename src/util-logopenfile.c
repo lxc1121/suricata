@@ -376,7 +376,7 @@ SCConfLogOpenGeneric(ConfNode *conf,
     const char *filemode = ConfNodeLookupChildValue(conf, "filemode");
     uint32_t mode = 0;
     if (filemode != NULL &&
-            ByteExtractStringUint32(&mode, 8, strlen(filemode),
+            StringParseUint32(&mode, 8, strlen(filemode),
                                     filemode) > 0) {
         log_ctx->filemode = mode;
     }
@@ -386,7 +386,6 @@ SCConfLogOpenGeneric(ConfNode *conf,
         append = DEFAULT_LOG_MODE_APPEND;
 
     /* JSON flags */
-#ifdef HAVE_LIBJANSSON
     log_ctx->json_flags = JSON_PRESERVE_ORDER|JSON_COMPACT|
                           JSON_ENSURE_ASCII|JSON_ESCAPE_SLASH;
 
@@ -412,7 +411,6 @@ SCConfLogOpenGeneric(ConfNode *conf,
         if (escape_slash != NULL && ConfValIsFalse(escape_slash))
             log_ctx->json_flags &= ~(JSON_ESCAPE_SLASH);
     }
-#endif /* HAVE_LIBJANSSON */
 
     // Now, what have we been asked to open?
     if (strcasecmp(filetype, "unix_stream") == 0) {

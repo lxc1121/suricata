@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2014 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -351,8 +351,15 @@ typedef enum {
     SC_WARN_EVE_MISSING_EVENTS,
     SC_ERR_PLEDGE_FAILED,
     SC_ERR_FTP_LOG_GENERIC,
+    SC_ERR_THASH_INIT,
+    SC_ERR_DATASET,
+    SC_WARN_ANOMALY_CONFIG,
+    SC_WARN_ALERT_CONFIG,
+    SC_ERR_PCRE_COPY_SUBSTRING,
+    SC_WARN_PCRE_JITSTACK,
+    SC_WARN_REGISTRATION_FAILED,
 
-    SC_ERR_MAX,
+    SC_ERR_MAX
 } SCError;
 
 const char *SCErrorToString(SCError);

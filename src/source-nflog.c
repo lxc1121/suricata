@@ -75,7 +75,7 @@ void ReceiveNFLOGThreadExitStats(ThreadVars *, void *);
 
 TmEcode DecodeNFLOGThreadInit(ThreadVars *, const void *, void **);
 TmEcode DecodeNFLOGThreadDeinit(ThreadVars *tv, void *data);
-TmEcode DecodeNFLOG(ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
+TmEcode DecodeNFLOG(ThreadVars *, Packet *, void *);
 
 static int runmode_workers;
 
@@ -193,7 +193,6 @@ static int NFLOGCallback(struct nflog_g_handle *gh, struct nfgenmsg *msg,
     (void) SC_ATOMIC_ADD(ntv->livedev->pkts, 1);
 
     if (TmThreadsSlotProcessPkt(ntv->tv, ntv->slot, p) != TM_ECODE_OK) {
-        TmqhOutputPacketpool(ntv->tv, p);
         return -1;
     }
 
@@ -497,11 +496,10 @@ void ReceiveNFLOGThreadExitStats(ThreadVars *tv, void *data)
  * \param tv pointer to ThreadVars
  * \param p pointer to the current packet
  * \param data pointer that gets cast into NFLOGThreadVars for ptv
- * \param pq pointer to the current PacketQueue
  *
  * \retval TM_ECODE_OK is always returned
  */
-TmEcode DecodeNFLOG(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, PacketQueue *postpq)
+TmEcode DecodeNFLOG(ThreadVars *tv, Packet *p, void *data)
 {
     SCEnter();
     IPV4Hdr *ip4h = (IPV4Hdr *)GET_PKT_DATA(p);
@@ -515,13 +513,13 @@ TmEcode DecodeNFLOG(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, Pack
             return TM_ECODE_FAILED;
         }
         SCLogDebug("IPv4 packet");
-        DecodeIPV4(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
+        DecodeIPV4(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p));
     } else if(IPV6_GET_RAW_VER(ip6h) == 6) {
         if (unlikely(GET_PKT_LEN(p) > USHRT_MAX)) {
             return TM_ECODE_FAILED;
         }
         SCLogDebug("IPv6 packet");
-        DecodeIPV6(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
+        DecodeIPV6(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p));
     } else {
         SCLogDebug("packet unsupported by NFLOG, first byte: %02x", *GET_PKT_DATA(p));
     }

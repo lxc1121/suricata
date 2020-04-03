@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -46,8 +46,7 @@
  */
 #define PARSE_REGEX  "^\\s*([A-z_]+)\\s*(?:,\\s*([A-z_]+))?\\s*(?:,\\s*([A-z_]+))?\\s*$"
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 int DetectFlowMatch (DetectEngineThreadCtx *, Packet *,
         const Signature *, const SigMatchCtx *);
@@ -56,7 +55,7 @@ void DetectFlowRegisterTests(void);
 void DetectFlowFree(void *);
 
 static int PrefilterSetupFlow(DetectEngineCtx *de_ctx, SigGroupHead *sgh);
-static _Bool PrefilterFlowIsPrefilterable(const Signature *s);
+static bool PrefilterFlowIsPrefilterable(const Signature *s);
 
 /**
  * \brief Registration function for flow: keyword
@@ -74,7 +73,7 @@ void DetectFlowRegister (void)
     sigmatch_table[DETECT_FLOW].SupportsPrefilter = PrefilterFlowIsPrefilterable;
     sigmatch_table[DETECT_FLOW].SetupPrefilter = PrefilterSetupFlow;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
 /**
@@ -170,12 +169,11 @@ static DetectFlowData *DetectFlowParse (const char *flowstr)
 {
     DetectFlowData *fd = NULL;
     char *args[3] = {NULL,NULL,NULL};
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
     char str1[16] = "", str2[16] = "", str3[16] = "";
 
-    ret = pcre_exec(parse_regex, parse_regex_study, flowstr, strlen(flowstr), 0, 0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, flowstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret < 1 || ret > 4) {
         SCLogError(SC_ERR_PCRE_MATCH, "parse error, ret %" PRId32 ", string %s", ret, flowstr);
         goto error;
@@ -446,7 +444,7 @@ PrefilterPacketFlowSet(PrefilterPacketHeaderValue *v, void *smctx)
     v->u8[1] = fb->match_cnt;
 }
 
-static _Bool
+static bool
 PrefilterPacketFlowCompare(PrefilterPacketHeaderValue v, void *smctx)
 {
     const DetectFlowData *fb = smctx;
@@ -466,7 +464,7 @@ static int PrefilterSetupFlow(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
         PrefilterPacketFlowMatch);
 }
 
-static _Bool PrefilterFlowIsPrefilterable(const Signature *s)
+static bool PrefilterFlowIsPrefilterable(const Signature *s)
 {
     const SigMatch *sm;
     for (sm = s->init_data->smlists[DETECT_SM_LIST_MATCH] ; sm != NULL; sm = sm->next) {

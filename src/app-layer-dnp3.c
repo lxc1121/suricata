@@ -265,7 +265,7 @@ static int DNP3ContainsBanner(const uint8_t *input, uint32_t len)
  * \brief DNP3 probing parser.
  */
 static uint16_t DNP3ProbingParser(Flow *f, uint8_t direction,
-        uint8_t *input, uint32_t len,
+        const uint8_t *input, uint32_t len,
         uint8_t *rdir)
 {
     DNP3LinkHeader *hdr = (DNP3LinkHeader *)input;
@@ -1111,8 +1111,8 @@ error:
  * date if a segment does not contain a complete frame (or contains
  * multiple frames, but not the complete final frame).
  */
-static int DNP3ParseRequest(Flow *f, void *state, AppLayerParserState *pstate,
-    uint8_t *input, uint32_t input_len, void *local_data,
+static AppLayerResult DNP3ParseRequest(Flow *f, void *state, AppLayerParserState *pstate,
+    const uint8_t *input, uint32_t input_len, void *local_data,
     const uint8_t flags)
 {
     SCEnter();
@@ -1121,7 +1121,7 @@ static int DNP3ParseRequest(Flow *f, void *state, AppLayerParserState *pstate,
     int processed = 0;
 
     if (input_len == 0) {
-        SCReturnInt(1);
+        SCReturnStruct(APP_LAYER_OK);
     }
 
     if (buffer->len) {
@@ -1159,12 +1159,12 @@ static int DNP3ParseRequest(Flow *f, void *state, AppLayerParserState *pstate,
         }
     }
 
-    SCReturnInt(1);
+    SCReturnStruct(APP_LAYER_OK);
 
 error:
     /* Reset the buffer. */
     DNP3BufferReset(buffer);
-    SCReturnInt(-1);
+    SCReturnStruct(APP_LAYER_ERROR);
 }
 
 /**
@@ -1251,8 +1251,8 @@ error:
  *
  * See DNP3ParseResponsePDUs for DNP3 frame handling.
  */
-static int DNP3ParseResponse(Flow *f, void *state, AppLayerParserState *pstate,
-    uint8_t *input, uint32_t input_len, void *local_data,
+static AppLayerResult DNP3ParseResponse(Flow *f, void *state, AppLayerParserState *pstate,
+    const uint8_t *input, uint32_t input_len, void *local_data,
     const uint8_t flags)
 {
     SCEnter();
@@ -1300,13 +1300,13 @@ static int DNP3ParseResponse(Flow *f, void *state, AppLayerParserState *pstate,
     }
 
 done:
-    SCReturnInt(1);
+    SCReturnStruct(APP_LAYER_OK);
 
 error:
     /* An error occurred while processing DNP3 frames.  Dump the
      * buffer as we can't be assured that they are valid anymore. */
     DNP3BufferReset(buffer);
-    SCReturnInt(-1);
+    SCReturnStruct(APP_LAYER_ERROR);
 }
 
 static AppLayerDecoderEvents *DNP3GetEvents(void *tx)
@@ -1609,15 +1609,13 @@ void RegisterDNP3Parsers(void)
         if (RunmodeIsUnittests()) {
             AppLayerProtoDetectPPRegister(IPPROTO_TCP, DNP3_DEFAULT_PORT,
                 ALPROTO_DNP3, 0, sizeof(DNP3LinkHeader), STREAM_TOSERVER,
-                DNP3ProbingParser, NULL);
+                DNP3ProbingParser, DNP3ProbingParser);
         }
         else {
             if (!AppLayerProtoDetectPPParseConfPorts("tcp", IPPROTO_TCP,
                     proto_name, ALPROTO_DNP3, 0, sizeof(DNP3LinkHeader),
-                    DNP3ProbingParser, NULL)) {
-#ifndef AFLFUZZ_APPLAYER
+                    DNP3ProbingParser, DNP3ProbingParser)) {
                 return;
-#endif
             }
         }
 

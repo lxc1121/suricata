@@ -1,4 +1,4 @@
-/* Copyright (C) 2017-2018 Open Information Security Foundation
+/* Copyright (C) 2017-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -17,17 +17,19 @@
 
 // written by Victor Julien
 
-use nom;
-use log::*;
+use crate::log::*;
 
-use nfs::nfs::*;
-use nfs::types::*;
-use nfs::rpc_records::*;
-use nfs::nfs2_records::*;
+use crate::nfs::nfs::*;
+use crate::nfs::types::*;
+use crate::nfs::rpc_records::*;
+use crate::nfs::nfs2_records::*;
+
+use nom::IResult;
+use nom::number::streaming::be_u32;
 
 impl NFSState {
     /// complete request record
-    pub fn process_request_record_v2<'b>(&mut self, r: &RpcPacket<'b>) -> u32 {
+    pub fn process_request_record_v2<'b>(&mut self, r: &RpcPacket<'b>) {
         SCLogDebug!("NFSv2: REQUEST {} procedure {} ({}) blob size {}",
                 r.hdr.xid, r.procedure, self.requestmap.len(), r.prog_data.len());
 
@@ -89,10 +91,9 @@ impl NFSState {
 
         SCLogDebug!("NFSv2: TS creating xidmap {}", r.hdr.xid);
         self.requestmap.insert(r.hdr.xid, xidmap);
-        0
     }
 
-    pub fn process_reply_record_v2<'b>(&mut self, r: &RpcReplyPacket<'b>, xidmap: &NFSRequestXidMap) -> u32 {
+    pub fn process_reply_record_v2<'b>(&mut self, r: &RpcReplyPacket<'b>, xidmap: &NFSRequestXidMap) {
         let mut nfs_status = 0;
         let resp_handle = Vec::new();
 
@@ -108,11 +109,9 @@ impl NFSState {
                 },
             }
         } else {
-            let stat = match nom::be_u32(&r.prog_data) {
-                Ok((_, stat)) => {
-                    stat as u32
-                }
-                _ => 0 as u32
+            let stat : u32 = match be_u32(&r.prog_data) as IResult<&[u8],_> {
+                Ok((_, stat)) => stat,
+                _ => 0
             };
             nfs_status = stat;
         }
@@ -120,8 +119,5 @@ impl NFSState {
                 r.hdr.xid, xidmap.procedure, r.prog_data.len());
 
         self.mark_response_tx_done(r.hdr.xid, r.reply_state, nfs_status, &resp_handle);
-
-        0
     }
-
 }

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2019 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -35,8 +35,7 @@
  */
 #define PARSE_REGEX  "^\\s*([0-9]*)?\\s*([<>=-]+)?\\s*([0-9]+)?\\s*$"
 
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 /* prototypes */
 static int DetectTcpmssMatch (DetectEngineThreadCtx *, Packet *,
@@ -47,7 +46,7 @@ void DetectTcpmssFree (void *);
 void DetectTcpmssRegisterTests (void);
 #endif
 static int PrefilterSetupTcpmss(DetectEngineCtx *de_ctx, SigGroupHead *sgh);
-static _Bool PrefilterTcpmssIsPrefilterable(const Signature *s);
+static bool PrefilterTcpmssIsPrefilterable(const Signature *s);
 
 /**
  * \brief Registration function for tcpmss: keyword
@@ -67,7 +66,7 @@ void DetectTcpmssRegister(void)
     sigmatch_table[DETECT_TCPMSS].SupportsPrefilter = PrefilterTcpmssIsPrefilterable;
     sigmatch_table[DETECT_TCPMSS].SetupPrefilter = PrefilterSetupTcpmss;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
     return;
 }
 
@@ -89,10 +88,9 @@ static inline int TcpmssMatch(const uint16_t parg, const uint8_t mode,
 /**
  * \brief This function is used to match TCPMSS rule option on a packet with those passed via tcpmss:
  *
- * \param t pointer to thread vars
  * \param det_ctx pointer to the pattern matcher thread
  * \param p pointer to the current packet
- * \param m pointer to the sigmatch that we will cast into DetectTcpmssData
+ * \param ctx pointer to the sigmatch that we will cast into DetectTcpmssData
  *
  * \retval 0 no match
  * \retval 1 match
@@ -128,11 +126,10 @@ static DetectTcpmssData *DetectTcpmssParse (const char *tcpmssstr)
     char *arg1 = NULL;
     char *arg2 = NULL;
     char *arg3 = NULL;
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
 
-    ret = pcre_exec(parse_regex, parse_regex_study, tcpmssstr, strlen(tcpmssstr), 0, 0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, tcpmssstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret < 2 || ret > 4) {
         SCLogError(SC_ERR_PCRE_MATCH, "parse error, ret %" PRId32 "", ret);
         goto error;
@@ -183,7 +180,7 @@ static DetectTcpmssData *DetectTcpmssParse (const char *tcpmssstr)
                 tcpmssd->mode = DETECT_TCPMSS_LT;
                 tcpmssd->arg1 = (uint16_t) atoi(arg3);
 
-                SCLogDebug("tcpmss is %"PRIu8"",tcpmssd->arg1);
+                SCLogDebug("tcpmss is %"PRIu16"",tcpmssd->arg1);
                 if (strlen(arg1) > 0)
                     goto error;
 
@@ -195,7 +192,7 @@ static DetectTcpmssData *DetectTcpmssParse (const char *tcpmssstr)
                 tcpmssd->mode = DETECT_TCPMSS_GT;
                 tcpmssd->arg1 = (uint16_t) atoi(arg3);
 
-                SCLogDebug("tcpmss is %"PRIu8"",tcpmssd->arg1);
+                SCLogDebug("tcpmss is %"PRIu16"",tcpmssd->arg1);
                 if (strlen(arg1) > 0)
                     goto error;
 
@@ -255,7 +252,7 @@ error:
 }
 
 /**
- * \brief this function is used to atcpmssd the parsed tcpmss data into the current signature
+ * \brief this function is used to attach the parsed tcpmss data into the current signature
  *
  * \param de_ctx pointer to the Detection Engine Context
  * \param s pointer to the Current Signature
@@ -333,15 +330,15 @@ PrefilterPacketTcpmssSet(PrefilterPacketHeaderValue *v, void *smctx)
     v->u16[2] = a->arg2;
 }
 
-static _Bool
+static bool
 PrefilterPacketTcpmssCompare(PrefilterPacketHeaderValue v, void *smctx)
 {
     const DetectTcpmssData *a = smctx;
     if (v.u8[0] == a->mode &&
         v.u16[1] == a->arg1 &&
         v.u16[2] == a->arg2)
-        return TRUE;
-    return FALSE;
+        return true;
+    return false;
 }
 
 static int PrefilterSetupTcpmss(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
@@ -352,16 +349,16 @@ static int PrefilterSetupTcpmss(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
             PrefilterPacketTcpmssMatch);
 }
 
-static _Bool PrefilterTcpmssIsPrefilterable(const Signature *s)
+static bool PrefilterTcpmssIsPrefilterable(const Signature *s)
 {
     const SigMatch *sm;
     for (sm = s->init_data->smlists[DETECT_SM_LIST_MATCH] ; sm != NULL; sm = sm->next) {
         switch (sm->type) {
             case DETECT_TCPMSS:
-                return TRUE;
+                return true;
         }
     }
-    return FALSE;
+    return false;
 }
 
 #ifdef UNITTESTS

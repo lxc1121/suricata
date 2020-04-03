@@ -236,7 +236,6 @@
 #include <w32api/wtypes.h>
 #endif
 
-#ifdef HAVE_LIBJANSSON
 #include <jansson.h>
 #ifndef JSON_ESCAPE_SLASH
 #define JSON_ESCAPE_SLASH 0
@@ -245,7 +244,6 @@
 #ifndef json_boolean
 #define json_boolean(val)      SCJsonBool((val))
 //#define json_boolean(val)      ((val) ? json_true() : json_false())
-#endif
 #endif
 
 #ifdef HAVE_MAGIC
@@ -440,8 +438,11 @@ typedef enum {
     LOGGER_JSON_KRB5,
     LOGGER_JSON_DHCP,
     LOGGER_JSON_SNMP,
+    LOGGER_JSON_SIP,
     LOGGER_JSON_TEMPLATE_RUST,
+    LOGGER_JSON_RFB,
     LOGGER_JSON_TEMPLATE,
+    LOGGER_JSON_RDP,
 
     LOGGER_ALERT_DEBUG,
     LOGGER_ALERT_FAST,
@@ -479,6 +480,10 @@ typedef enum {
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
+#else
+/* If we don't have Lua, create a typedef for lua_State so the
+ * exported Lua functions don't fail the build. */
+typedef void lua_State;
 #endif
 
 #ifndef HAVE_STRLCAT
@@ -494,5 +499,12 @@ char *strptime(const char * __restrict, const char * __restrict, struct tm * __r
 extern int coverage_unittests;
 extern int g_ut_modules;
 extern int g_ut_covered;
+
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
+
+#ifndef NAME_MAX
+#define NAME_MAX 255
+#endif
+
 #endif /* __SURICATA_COMMON_H__ */
 

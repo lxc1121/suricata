@@ -1,4 +1,4 @@
-/* Copyright (C) 2015 Open Information Security Foundation
+/* Copyright (C) 2015-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -34,15 +34,7 @@
 
 #include "app-layer-nfs-udp.h"
 
-#ifndef HAVE_RUST
-void RegisterNFSUDPParsers(void)
-{
-}
-
-#else
-
 #include "rust.h"
-#include "rust-nfs-nfs-gen.h"
 
 /* The default port to probe for echo traffic if not provided in the
  * configuration file. */
@@ -118,7 +110,7 @@ static AppLayerDecoderEvents *NFSGetEvents(void *tx)
  *     ALPROTO_UNKNOWN.
  */
 static AppProto NFSProbingParser(Flow *f, uint8_t direction,
-        uint8_t *input, uint32_t input_len, uint8_t *rdir)
+        const uint8_t *input, uint32_t input_len, uint8_t *rdir)
 {
     SCLogDebug("probing");
     if (input_len < NFS_MIN_FRAME_LEN) {
@@ -144,24 +136,28 @@ static AppProto NFSProbingParser(Flow *f, uint8_t direction,
     return ALPROTO_UNKNOWN;
 }
 
-static int NFSParseRequest(Flow *f, void *state,
-    AppLayerParserState *pstate, uint8_t *input, uint32_t input_len,
+static AppLayerResult NFSParseRequest(Flow *f, void *state,
+    AppLayerParserState *pstate, const uint8_t *input, uint32_t input_len,
     void *local_data, const uint8_t flags)
 {
     uint16_t file_flags = FileFlowToFlags(f, STREAM_TOSERVER);
     rs_nfs_setfileflags(0, state, file_flags);
 
-    return rs_nfs_parse_request_udp(f, state, pstate, input, input_len, local_data);
+    AppLayerResult res = rs_nfs_parse_request_udp(f, state, pstate,
+            input, input_len, local_data);
+    SCReturnStruct(res);
 }
 
-static int NFSParseResponse(Flow *f, void *state, AppLayerParserState *pstate,
-    uint8_t *input, uint32_t input_len, void *local_data,
+static AppLayerResult NFSParseResponse(Flow *f, void *state, AppLayerParserState *pstate,
+    const uint8_t *input, uint32_t input_len, void *local_data,
     const uint8_t flags)
 {
     uint16_t file_flags = FileFlowToFlags(f, STREAM_TOCLIENT);
     rs_nfs_setfileflags(1, state, file_flags);
 
-    return rs_nfs_parse_response_udp(f, state, pstate, input, input_len, local_data);
+    AppLayerResult res = rs_nfs_parse_response_udp(f, state, pstate,
+            input, input_len, local_data);
+    SCReturnStruct(res);
 }
 
 static uint64_t NFSGetTxCnt(void *state)
@@ -375,5 +371,3 @@ void NFSUDPParserRegisterTests(void)
 #ifdef UNITTESTS
 #endif
 }
-
-#endif /* HAVE_RUST */

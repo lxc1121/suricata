@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2014 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -39,6 +39,7 @@
 
 #include "suricata.h"
 #include "decode.h"
+#include "feature.h"
 #include "detect.h"
 #include "packet-queue.h"
 #include "threads.h"
@@ -72,6 +73,8 @@
 
 #include "conf.h"
 #include "conf-yaml-loader.h"
+
+#include "datasets.h"
 
 #include "stream-tcp.h"
 
@@ -118,8 +121,6 @@
 #include "app-layer-parser.h"
 #include "app-layer-htp.h"
 #include "app-layer-ssl.h"
-#include "app-layer-dns-tcp.h"
-#include "app-layer-dns-udp.h"
 #include "app-layer-ssh.h"
 #include "app-layer-ftp.h"
 #include "app-layer-smtp.h"
@@ -129,7 +130,6 @@
 #include "app-layer-smb.h"
 #include "app-layer-dcerpc.h"
 
-#include "util-decode-der.h"
 #include "util-ebpf.h"
 #include "util-radix-tree.h"
 #include "util-host-os-info.h"
@@ -174,10 +174,7 @@
 
 #include "util-lua.h"
 
-#ifdef HAVE_RUST
 #include "rust.h"
-#include "rust-core-gen.h"
-#endif
 
 /*
  * we put this here, because we only use it here in main.
@@ -222,6 +219,8 @@ int sc_set_caps = FALSE;
 
 /** highest mtu of the interfaces we monitor */
 int g_default_mtu = 0;
+
+bool g_system = false;
 
 /** disable randomness to get reproducible results accross runs */
 #ifndef AFLFUZZ_NO_RANDOM
@@ -327,21 +326,6 @@ uint8_t print_mem_flag = 1;
 
 void GlobalsInitPreConfig(void)
 {
-    memset(trans_q, 0, sizeof(trans_q));
-
-    /* Initialize the trans_q mutex */
-    int blah;
-    int r = 0;
-    for(blah=0;blah<256;blah++) {
-        r |= SCMutexInit(&trans_q[blah].mutex_q, NULL);
-        r |= SCCondInit(&trans_q[blah].cond_q, NULL);
-   }
-
-    if (r != 0) {
-        SCLogInfo("Trans_Q Mutex not initialized correctly");
-        exit(EXIT_FAILURE);
-    }
-
     TimeInit();
     SupportFastPatternForSigMatchTypes();
     SCThresholdConfGlobalInit();
@@ -371,11 +355,13 @@ static void GlobalsDestroy(SCInstance *suri)
     DetectEnginePruneFreeList();
 
     AppLayerDeSetup();
-
+    DatasetsSave();
+    DatasetsDestroy();
     TagDestroyCtx();
 
     LiveDeviceListClean();
     OutputDeregisterAll();
+    FeatureTrackingRelease();
     TimeDeinit();
     SCProtoNameDeInit();
     if (!suri->disabled_detect) {
@@ -389,8 +375,10 @@ static void GlobalsDestroy(SCInstance *suri)
     TmModuleRunDeInit();
     ParseSizeDeinit();
 #ifdef HAVE_NSS
-    NSS_Shutdown();
-    PR_Cleanup();
+    if (NSS_IsInitialized()) {
+        NSS_Shutdown();
+        PR_Cleanup();
+    }
 #endif
 
 #ifdef HAVE_AF_PACKET
@@ -609,7 +597,7 @@ static void PrintUsage(const char *progname)
 #endif /* OS_WIN32 */
     printf("\t-k [all|none]                        : force checksum check (all) or disabled it (none)\n");
     printf("\t-V                                   : display Suricata version\n");
-    printf("\t-v[v]                                : increase default Suricata verbosity\n");
+    printf("\t-v                                   : be more verbose (use multiple times to increase verbosity)\n");
 #ifdef UNITTESTS
     printf("\t-u                                   : run the unittests and exit\n");
     printf("\t-U, --unittest-filter=REGEX          : filter unittests with a regex\n");
@@ -630,6 +618,7 @@ static void PrintUsage(const char *progname)
     printf("\t--init-errors-fatal                  : enable fatal failure on signature init error\n");
     printf("\t--disable-detection                  : disable detection engine\n");
     printf("\t--dump-config                        : show the running configuration\n");
+    printf("\t--dump-features                      : display provided features\n");
     printf("\t--build-info                         : display build information\n");
     printf("\t--pcap[=<dev>]                       : run in pcap mode, no value select interfaces from suricata.yaml\n");
     printf("\t--pcap-file-continuous               : when running in pcap mode with a directory, continue checking directory for pcaps until interrupted\n");
@@ -683,13 +672,7 @@ static void PrintBuildInfo(void)
     char features[2048] = "";
     const char *tls = "pthread key";
 
-#ifdef REVISION
-    printf("This is %s version %s (%s)\n", PROG_NAME, PROG_VER, xstr(REVISION));
-#elif defined RELEASE
-    printf("This is %s version %s RELEASE\n", PROG_NAME, PROG_VER);
-#else
-    printf("This is %s version %s\n", PROG_NAME, PROG_VER);
-#endif
+    printf("This is %s version %s\n", PROG_NAME, GetProgramVersion());
 
 #ifdef DEBUG
     strlcat(features, "DEBUG ", sizeof(features));
@@ -745,9 +728,7 @@ static void PrintBuildInfo(void)
 #ifdef HAVE_LUAJIT
     strlcat(features, "HAVE_LUAJIT ", sizeof(features));
 #endif
-#ifdef HAVE_LIBJANSSON
     strlcat(features, "HAVE_LIBJANSSON ", sizeof(features));
-#endif
 #ifdef PROFILING
     strlcat(features, "PROFILING ", sizeof(features));
 #endif
@@ -760,9 +741,7 @@ static void PrintBuildInfo(void)
 #ifdef HAVE_MAGIC
     strlcat(features, "MAGIC ", sizeof(features));
 #endif
-#if defined(HAVE_RUST)
     strlcat(features, "RUST ", sizeof(features));
-#endif
     if (strlen(features) == 0) {
         strlcat(features, "none", sizeof(features));
     }
@@ -807,7 +786,7 @@ static void PrintBuildInfo(void)
     } else {
         strlcat(features, "byte(s)", sizeof(features));
     }
-    printf("Atomic intrisics: %s\n", features);
+    printf("Atomic intrinsics: %s\n", features);
 
 #if __WORDSIZE == 64
     bits = "64-bits";
@@ -1051,31 +1030,42 @@ static void SCInstanceInit(SCInstance *suri, const char *progname)
 #endif
 }
 
+/** \brief get string with program version
+ *
+ *  Get the program version as passed to us from AC_INIT
+ *
+ *  Add 'RELEASE' is no '-dev' in the version. Add the REVISION if passed
+ *  to us.
+ *
+ *  Possible outputs:
+ *  release:      '5.0.1 RELEASE'
+ *  dev with rev: '5.0.1-dev (64a789bbf 2019-10-18)'
+ *  dev w/o rev:  '5.0.1-dev'
+ */
+const char *GetProgramVersion(void)
+{
+    if (strstr(PROG_VER, "-dev") == NULL) {
+        return PROG_VER " RELEASE";
+    } else {
+#ifdef REVISION
+        return PROG_VER " (" xstr(REVISION) ")";
+#else
+        return PROG_VER;
+#endif
+    }
+}
+
 static TmEcode PrintVersion(void)
 {
-#ifdef REVISION
-    printf("This is %s version %s (%s)\n", PROG_NAME, PROG_VER, xstr(REVISION));
-#elif defined RELEASE
-    printf("This is %s version %s RELEASE\n", PROG_NAME, PROG_VER);
-#else
-    printf("This is %s version %s\n", PROG_NAME, PROG_VER);
-#endif
+    printf("This is %s version %s\n", PROG_NAME, GetProgramVersion());
     return TM_ECODE_OK;
 }
 
 static TmEcode LogVersion(SCInstance *suri)
 {
     const char *mode = suri->system ? "SYSTEM" : "USER";
-#ifdef REVISION
-    SCLogNotice("This is %s version %s (%s) running in %s mode",
-            PROG_NAME, PROG_VER, xstr(REVISION), mode);
-#elif defined RELEASE
-    SCLogNotice("This is %s version %s RELEASE running in %s mode",
-            PROG_NAME, PROG_VER, mode);
-#else
     SCLogNotice("This is %s version %s running in %s mode",
-            PROG_NAME, PROG_VER, mode);
-#endif
+            PROG_NAME, GetProgramVersion(), mode);
     return TM_ECODE_OK;
 }
 
@@ -1166,252 +1156,14 @@ static int ParseCommandLinePcapLive(SCInstance *suri, const char *in_arg)
     return TM_ECODE_OK;
 }
 
-static void ParseCommandLineAFL(const char *opt_name, char *opt_arg)
+/**
+ * Helper function to check if log directory is writable
+ */
+static bool IsLogDirectoryWritable(const char* str)
 {
-#ifdef AFLFUZZ_RULES
-    if(strcmp(opt_name, "afl-rules") == 0) {
-        MpmTableSetup();
-        SpmTableSetup();
-        exit(RuleParseDataFromFile(opt_arg));
-    } else
-#endif
-#ifdef AFLFUZZ_APPLAYER
-    if(strcmp(opt_name, "afl-http-request") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        AppLayerParserSetup();
-        RegisterHTPParsers();
-        exit(AppLayerParserRequestFromFile(IPPROTO_TCP, ALPROTO_HTTP, opt_arg));
-    } else if(strcmp(opt_name, "afl-http") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        AppLayerParserSetup();
-        RegisterHTPParsers();
-        exit(AppLayerParserFromFile(IPPROTO_TCP, ALPROTO_HTTP, opt_arg));
-
-    } else if(strcmp(opt_name, "afl-tls-request") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        AppLayerParserSetup();
-        RegisterSSLParsers();
-        exit(AppLayerParserRequestFromFile(IPPROTO_TCP, ALPROTO_TLS, opt_arg));
-    } else if(strcmp(opt_name, "afl-tls") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        AppLayerParserSetup();
-        RegisterSSLParsers();
-        exit(AppLayerParserFromFile(IPPROTO_TCP, ALPROTO_TLS, opt_arg));
-
-    } else if(strcmp(opt_name, "afl-dns-request") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        RegisterDNSUDPParsers();
-        exit(AppLayerParserRequestFromFile(IPPROTO_UDP, ALPROTO_DNS, opt_arg));
-    } else if(strcmp(opt_name, "afl-dns") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        AppLayerParserSetup();
-        RegisterDNSUDPParsers();
-        exit(AppLayerParserFromFile(IPPROTO_UDP, ALPROTO_DNS, opt_arg));
-
-    } else if(strcmp(opt_name, "afl-dnstcp-request") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        RegisterDNSTCPParsers();
-        exit(AppLayerParserRequestFromFile(IPPROTO_TCP, ALPROTO_DNS, opt_arg));
-    } else if(strcmp(opt_name, "afl-dnstcp") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        AppLayerParserSetup();
-        RegisterDNSTCPParsers();
-        exit(AppLayerParserFromFile(IPPROTO_TCP, ALPROTO_DNS, opt_arg));
-
-    } else if(strcmp(opt_name, "afl-ssh-request") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        RegisterSSHParsers();
-        exit(AppLayerParserRequestFromFile(IPPROTO_TCP, ALPROTO_SSH, opt_arg));
-    } else if(strcmp(opt_name, "afl-ssh") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        AppLayerParserSetup();
-        RegisterSSHParsers();
-        exit(AppLayerParserFromFile(IPPROTO_TCP, ALPROTO_SSH, opt_arg));
-
-    } else if(strcmp(opt_name, "afl-ftp-request") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        IPPairInitConfig(FLOW_QUIET);
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        AppLayerParserSetup();
-        RegisterFTPParsers();
-        exit(AppLayerParserRequestFromFile(IPPROTO_TCP, ALPROTO_FTP, opt_arg));
-    } else if(strcmp(opt_name, "afl-ftp") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        IPPairInitConfig(FLOW_QUIET);
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        AppLayerParserSetup();
-        RegisterFTPParsers();
-        exit(AppLayerParserFromFile(IPPROTO_TCP, ALPROTO_FTP, opt_arg));
-
-    } else if(strcmp(opt_name, "afl-smtp-request") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        AppLayerParserSetup();
-        RegisterSMTPParsers();
-        exit(AppLayerParserRequestFromFile(IPPROTO_TCP, ALPROTO_SMTP, opt_arg));
-    } else if(strcmp(opt_name, "afl-smtp") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        AppLayerParserSetup();
-        RegisterSMTPParsers();
-        exit(AppLayerParserFromFile(IPPROTO_TCP, ALPROTO_SMTP, opt_arg));
-
-    } else if(strcmp(opt_name, "afl-smb-request") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        RegisterSMBParsers();
-        exit(AppLayerParserRequestFromFile(IPPROTO_TCP, ALPROTO_SMB, opt_arg));
-    } else if(strcmp(opt_name, "afl-smb") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        AppLayerParserSetup();
-        RegisterSMBParsers();
-        exit(AppLayerParserFromFile(IPPROTO_TCP, ALPROTO_SMB, opt_arg));
-    } else if(strstr(opt_name, "afl-dcerpc-request") != NULL) {
-        //printf("arg: //%s\n", opt_arg);
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        AppLayerParserSetup();
-        RegisterDCERPCParsers();
-        if (strcmp(opt_name, "afl-dcerpc-request") == 0)
-            exit(AppLayerParserRequestFromFile(IPPROTO_TCP, ALPROTO_DCERPC, opt_arg));
-        else
-            exit(AppLayerParserRequestFromFileSerie(IPPROTO_TCP, ALPROTO_DCERPC, opt_arg));
-    } else if(strstr(opt_name, "afl-dcerpc") != NULL) {
-        //printf("arg: //%s\n", opt_arg);
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        AppLayerParserSetup();
-        RegisterDCERPCParsers();
-        if (strcmp(opt_name, "afl-dcerpc") == 0)
-            exit(AppLayerParserFromFile(IPPROTO_TCP, ALPROTO_DCERPC, opt_arg));
-        else
-            exit(AppLayerParserFromFileSerie(IPPROTO_TCP, ALPROTO_DCERPC, opt_arg));
-    } else if(strcmp(opt_name, "afl-modbus-request") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        AppLayerParserSetup();
-        RegisterModbusParsers();
-        exit(AppLayerParserRequestFromFile(IPPROTO_TCP, ALPROTO_MODBUS, opt_arg));
-    } else if(strcmp(opt_name, "afl-modbus") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        AppLayerParserSetup();
-        RegisterModbusParsers();
-        exit(AppLayerParserFromFile(IPPROTO_TCP, ALPROTO_MODBUS, opt_arg));
-    } else if(strcmp(opt_name, "afl-enip-request") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        AppLayerParserSetup();
-        RegisterENIPTCPParsers();
-        exit(AppLayerParserRequestFromFile(IPPROTO_TCP, ALPROTO_ENIP, opt_arg));
-    } else if(strcmp(opt_name, "afl-enip") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        AppLayerParserSetup();
-        RegisterENIPTCPParsers();
-        exit(AppLayerParserFromFile(IPPROTO_TCP, ALPROTO_ENIP, opt_arg));
-    } else if(strcmp(opt_name, "afl-dnp3-request") == 0) {
-        AppLayerParserSetup();
-        RegisterDNP3Parsers();
-        exit(AppLayerParserRequestFromFile(IPPROTO_TCP, ALPROTO_DNP3, opt_arg));
-    } else if(strcmp(opt_name, "afl-dnp3") == 0) {
-        AppLayerParserSetup();
-        RegisterDNP3Parsers();
-        exit(AppLayerParserFromFile(IPPROTO_TCP, ALPROTO_DNP3, opt_arg));
-    } else
-#endif
-#ifdef AFLFUZZ_MIME
-    if(strcmp(opt_name, "afl-mime") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        exit(MimeParserDataFromFile(opt_arg));
-    } else
-#endif
-#ifdef AFLFUZZ_DECODER
-    if(strstr(opt_name, "afl-decoder-ppp") != NULL) {
-        StatsInit();
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        if (strcmp(opt_name, "afl-decoder-ppp") == 0)
-            exit(DecoderParseDataFromFile(opt_arg, DecodePPP));
-        else
-            exit(DecoderParseDataFromFileSerie(opt_arg, DecodePPP));
-    } else if(strstr(opt_name, "afl-decoder-ipv4") != NULL) {
-        StatsInit();
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        if (strcmp(opt_name, "afl-decoder-ipv4") == 0)
-            exit(DecoderParseDataFromFile(opt_arg, DecodeIPV4));
-        else
-            exit(DecoderParseDataFromFileSerie(opt_arg, DecodeIPV4));
-    } else if(strstr(opt_name, "afl-decoder-ipv6") != NULL) {
-        StatsInit();
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        if (strcmp(opt_name, "afl-decoder-ipv6") == 0)
-            exit(DecoderParseDataFromFile(opt_arg, DecodeIPV6));
-        else
-            exit(DecoderParseDataFromFileSerie(opt_arg, DecodeIPV6));
-    } else if(strstr(opt_name, "afl-decoder-ethernet") != NULL) {
-        StatsInit();
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        if (strcmp(opt_name, "afl-decoder-ethernet") == 0)
-            exit(DecoderParseDataFromFile(opt_arg, DecodeEthernet));
-        else
-            exit(DecoderParseDataFromFileSerie(opt_arg, DecodeEthernet));
-    } else if(strstr(opt_name, "afl-decoder-erspan") != NULL) {
-        StatsInit();
-        MpmTableSetup();
-        SpmTableSetup();
-        AppLayerProtoDetectSetup();
-        if (strcmp(opt_name, "afl-decoder-erspan") == 0)
-            exit(DecoderParseDataFromFile(opt_arg, DecodeERSPAN));
-        else
-            exit(DecoderParseDataFromFileSerie(opt_arg, DecodeERSPAN));
-    } else
-#endif
-#ifdef AFLFUZZ_DER
-    if(strcmp(opt_name, "afl-der") == 0) {
-        //printf("arg: //%s\n", opt_arg);
-        exit(DerParseDataFromFile(opt_arg));
-    } else
-#endif
-    {
-        abort();
-    }
+    if (access(str, W_OK) == 0)
+        return true;
+    return false;
 }
 
 static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
@@ -1419,15 +1171,13 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
     int opt;
 
     int dump_config = 0;
+    int dump_features = 0;
     int list_app_layer_protocols = 0;
     int list_unittests = 0;
     int list_runmodes = 0;
     int list_keywords = 0;
     int build_info = 0;
     int conf_test = 0;
-#ifdef AFLFUZZ_CONF_TEST
-    int conf_test_force_success = 0;
-#endif
     int engine_analysis = 0;
     int ret = TM_ECODE_OK;
 
@@ -1439,6 +1189,7 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
 
     struct option long_opts[] = {
         {"dump-config", 0, &dump_config, 1},
+        {"dump-features", 0, &dump_features, 1},
         {"pfring", optional_argument, 0, 0},
         {"pfring-int", required_argument, 0, 0},
         {"pfring-cluster-id", required_argument, 0, 0},
@@ -1450,48 +1201,7 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
         {"pcap-file-delete", 0, 0, 0},
         {"simulate-ips", 0, 0 , 0},
         {"no-random", 0, &g_disable_randomness, 1},
-
-        /* AFL app-layer options. */
-        {"afl-http-request", required_argument, 0 , 0},
-        {"afl-http", required_argument, 0 , 0},
-        {"afl-tls-request", required_argument, 0 , 0},
-        {"afl-tls", required_argument, 0 , 0},
-        {"afl-dns-request", required_argument, 0 , 0},
-        {"afl-dns", required_argument, 0 , 0},
-        {"afl-ssh-request", required_argument, 0 , 0},
-        {"afl-ssh", required_argument, 0 , 0},
-        {"afl-ftp-request", required_argument, 0 , 0},
-        {"afl-ftp", required_argument, 0 , 0},
-        {"afl-smtp-request", required_argument, 0 , 0},
-        {"afl-smtp", required_argument, 0 , 0},
-        {"afl-smb-request", required_argument, 0 , 0},
-        {"afl-smb", required_argument, 0 , 0},
-        {"afl-modbus-request", required_argument, 0 , 0},
-        {"afl-modbus", required_argument, 0 , 0},
-        {"afl-enip-request", required_argument, 0 , 0},
-        {"afl-enip", required_argument, 0 , 0},
-        {"afl-mime", required_argument, 0 , 0},
-        {"afl-dnp3-request", required_argument, 0, 0},
-        {"afl-dnp3", required_argument, 0, 0},
-        {"afl-dcerpc", required_argument, 0, 0},
-        {"afl-dcerpc-serie", required_argument, 0, 0},
-        {"afl-dcerpc-request", required_argument, 0, 0},
-        {"afl-dcerpc-request-serie", required_argument, 0, 0},
-
-        /* Other AFL options. */
-        {"afl-rules", required_argument, 0 , 0},
-        {"afl-mime", required_argument, 0 , 0},
-        {"afl-decoder-ppp", required_argument, 0 , 0},
-        {"afl-decoder-ppp-serie", required_argument, 0 , 0},
-        {"afl-decoder-ethernet", required_argument, 0 , 0},
-        {"afl-decoder-ethernet-serie", required_argument, 0 , 0},
-        {"afl-decoder-erspan", required_argument, 0 , 0},
-        {"afl-decoder-erspan-serie", required_argument, 0 , 0},
-        {"afl-decoder-ipv4", required_argument, 0 , 0},
-        {"afl-decoder-ipv4-serie", required_argument, 0 , 0},
-        {"afl-decoder-ipv6", required_argument, 0 , 0},
-        {"afl-decoder-ipv6-serie", required_argument, 0 , 0},
-        {"afl-der", required_argument, 0, 0},
+        {"strict-rule-keywords", optional_argument, 0, 0},
 
 #ifdef BUILD_UNIX_SOCKET
         {"unix-socket", optional_argument, 0, 0},
@@ -1520,6 +1230,7 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
         {"dag", required_argument, 0, 0},
         {"napatech", 0, 0, 0},
         {"build-info", 0, &build_info, 1},
+        {"data-dir", required_argument, 0, 0},
 #ifdef WINDIVERT
         {"windivert", required_argument, 0, 0},
         {"windivert-forward", required_argument, 0, 0},
@@ -1527,9 +1238,6 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
         {"set", required_argument, 0, 0},
 #ifdef HAVE_NFLOG
         {"nflog", optional_argument, 0, 0},
-#endif
-#ifdef AFLFUZZ_CONF_TEST
-        {"afl-parse-rules", 0, &conf_test_force_success, 1},
 #endif
         {NULL, 0, NULL, 0}
     };
@@ -1630,8 +1338,6 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                 if (ParseCommandLinePcapLive(suri, optarg) != TM_ECODE_OK) {
                     return TM_ECODE_FAILED;
                 }
-            } else if(strncmp((long_opts[option_index]).name, "afl-", 4) == 0) {
-                ParseCommandLineAFL((long_opts[option_index]).name, optarg);
             } else if(strcmp((long_opts[option_index]).name, "simulate-ips") == 0) {
                 SCLogInfo("Setting IPS mode");
                 EngineModeSetIPS();
@@ -1852,6 +1558,33 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                     return TM_ECODE_FAILED;
                 }
             }
+            else if (strcmp((long_opts[option_index]).name, "data-dir") == 0) {
+                if (optarg == NULL) {
+                    SCLogError(SC_ERR_INITIALIZATION, "no option argument (optarg) for -d");
+                    return TM_ECODE_FAILED;
+                }
+
+                if (ConfigSetDataDirectory(optarg) != TM_ECODE_OK) {
+                    SCLogError(SC_ERR_FATAL, "Failed to set data directory.");
+                    return TM_ECODE_FAILED;
+                }
+                if (ConfigCheckDataDirectory(optarg) != TM_ECODE_OK) {
+                    SCLogError(SC_ERR_LOGDIR_CMDLINE, "The data directory \"%s\""
+                            " supplied at the commandline (-d %s) doesn't "
+                            "exist. Shutting down the engine.", optarg, optarg);
+                    return TM_ECODE_FAILED;
+                }
+                suri->set_datadir = true;
+            } else if (strcmp((long_opts[option_index]).name , "strict-rule-keywords") == 0){
+                if (optarg == NULL) {
+                    suri->strict_rule_parsing_string = SCStrdup("all");
+                } else {
+                    suri->strict_rule_parsing_string = SCStrdup(optarg);
+                }
+                if (suri->strict_rule_parsing_string == NULL) {
+                    FatalError(SC_ERR_MEM_ALLOC, "failed to duplicate 'strict' string");
+                }
+            }
             break;
         case 'c':
             suri->conf_filename = optarg;
@@ -1922,13 +1655,19 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
             }
 
             if (ConfigSetLogDirectory(optarg) != TM_ECODE_OK) {
-                SCLogError(SC_ERR_FATAL, "Failed to set log directory.\n");
+                SCLogError(SC_ERR_FATAL, "Failed to set log directory.");
                 return TM_ECODE_FAILED;
             }
-            if (ConfigCheckLogDirectory(optarg) != TM_ECODE_OK) {
+            if (ConfigCheckLogDirectoryExists(optarg) != TM_ECODE_OK) {
                 SCLogError(SC_ERR_LOGDIR_CMDLINE, "The logging directory \"%s\""
                         " supplied at the commandline (-l %s) doesn't "
                         "exist. Shutting down the engine.", optarg, optarg);
+                return TM_ECODE_FAILED;
+            }
+            if (!IsLogDirectoryWritable(optarg)) {
+                SCLogError(SC_ERR_LOGDIR_CMDLINE, "The logging directory \"%s\""
+                        " supplied at the commandline (-l %s) is not "
+                        "writable. Shutting down the engine.", optarg, optarg);
                 return TM_ECODE_FAILED;
             }
             suri->set_logdir = true;
@@ -2077,11 +1816,6 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
         SCLogError(SC_ERR_INITIALIZATION, "can't use -s/-S when detection is disabled");
         return TM_ECODE_FAILED;
     }
-#ifdef AFLFUZZ_CONF_TEST
-    if (conf_test && conf_test_force_success) {
-        (void)ConfSetFinal("engine.init-failure-fatal", "0");
-    }
-#endif
 
     if ((suri->run_mode == RUNMODE_UNIX_SOCKET) && suri->set_logdir) {
         SCLogError(SC_ERR_INITIALIZATION,
@@ -2100,13 +1834,15 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
         suri->run_mode = RUNMODE_LIST_UNITTEST;
     if (dump_config)
         suri->run_mode = RUNMODE_DUMP_CONFIG;
+    if (dump_features)
+        suri->run_mode = RUNMODE_DUMP_FEATURES;
     if (conf_test)
         suri->run_mode = RUNMODE_CONF_TEST;
     if (engine_analysis)
         suri->run_mode = RUNMODE_ENGINE_ANALYSIS;
 
     suri->offline = IsRunModeOffline(suri->run_mode);
-    suri->system = IsRunModeSystem(suri->run_mode);
+    g_system = suri->system = IsRunModeSystem(suri->run_mode);
 
     ret = SetBpfString(optind, argv);
     if (ret != TM_ECODE_OK)
@@ -2191,8 +1927,10 @@ static int MayDaemonize(SCInstance *suri)
 static int InitSignalHandler(SCInstance *suri)
 {
     /* registering signals we use */
+#ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
     UtilSignalHandlerSetup(SIGINT, SignalHandlerSigint);
     UtilSignalHandlerSetup(SIGTERM, SignalHandlerSigterm);
+#endif
 #ifndef OS_WIN32
     UtilSignalHandlerSetup(SIGHUP, SignalHandlerSigHup);
     UtilSignalHandlerSetup(SIGPIPE, SIG_IGN);
@@ -2251,6 +1989,7 @@ void PreRunInit(const int runmode)
     SCProfilingSghsGlobalInit();
     SCProfilingInit();
 #endif /* PROFILING */
+    DatasetsInit();
     DefragInit();
     FlowInitConfig(FLOW_QUIET);
     IPPairInitConfig(FLOW_QUIET);
@@ -2479,9 +2218,9 @@ static int ConfigGetCaptureValue(SCInstance *suri)
             case RUNMODE_PCAP_DEV:
             case RUNMODE_AFP_DEV:
             case RUNMODE_PFRING:
-                nlive = LiveGetDeviceCount();
+                nlive = LiveGetDeviceNameCount();
                 for (lthread = 0; lthread < nlive; lthread++) {
-                    const char *live_dev = LiveGetDeviceName(lthread);
+                    const char *live_dev = LiveGetDeviceNameName(lthread);
                     char dev[128]; /* need to be able to support GUID names on Windows */
                     (void)strlcpy(dev, live_dev, sizeof(dev));
 
@@ -2529,8 +2268,7 @@ static void PostRunStartedDetectSetup(const SCInstance *suri)
     /* registering signal handlers we use. We setup usr2 here, so that one
      * can't call it during the first sig load phase or while threads are still
      * starting up. */
-    if (DetectEngineEnabled() && suri->sig_file == NULL &&
-            suri->delayed_detect == 0) {
+    if (DetectEngineEnabled() && suri->delayed_detect == 0) {
         UtilSignalHandlerSetup(SIGUSR2, SignalHandlerSigusr2);
         UtilSignalUnblock(SIGUSR2);
     }
@@ -2654,6 +2392,12 @@ static void SetupUserMode(SCInstance *suri)
                 FatalError(SC_ERR_LOGDIR_CONFIG, "could not set USER mode logdir");
             }
         }
+        if (suri->set_datadir == false) {
+            /* override data dir to current work dir" */
+            if (ConfigSetDataDirectory((char *)".") != TM_ECODE_OK) {
+                FatalError(SC_ERR_LOGDIR_CONFIG, "could not set USER mode datadir");
+            }
+        }
     }
 }
 
@@ -2661,7 +2405,7 @@ static void SetupUserMode(SCInstance *suri)
  * This function is meant to contain code that needs
  * to be run once the configuration has been loaded.
  */
-static int PostConfLoadedSetup(SCInstance *suri)
+int PostConfLoadedSetup(SCInstance *suri)
 {
     /* do this as early as possible #1577 #1955 */
 #ifdef HAVE_LUAJIT
@@ -2719,22 +2463,12 @@ static int PostConfLoadedSetup(SCInstance *suri)
     const char *custom_umask;
     if (ConfGet("umask", &custom_umask) == 1) {
         uint16_t mask;
-        if (ByteExtractStringUint16(&mask, 8, strlen(custom_umask),
+        if (StringParseUint16(&mask, 8, strlen(custom_umask),
                                     custom_umask) > 0) {
             umask((mode_t)mask);
         }
     }
 
-    /* Check for the existance of the default logging directory which we pick
-     * from suricata.yaml.  If not found, shut the engine down */
-    suri->log_dir = ConfigGetLogDirectory();
-
-    if (ConfigCheckLogDirectory(suri->log_dir) != TM_ECODE_OK) {
-        SCLogError(SC_ERR_LOGDIR_CONFIG, "The logging directory \"%s\" "
-                "supplied by %s (default-log-dir) doesn't exist. "
-                "Shutting down the engine", suri->log_dir, suri->conf_filename);
-        SCReturnInt(TM_ECODE_FAILED);
-    }
 
     if (ConfigGetCaptureValue(suri) != TM_ECODE_OK) {
         SCReturnInt(TM_ECODE_FAILED);
@@ -2761,6 +2495,7 @@ static int PostConfLoadedSetup(SCInstance *suri)
 
     /* hardcoded initialization code */
     SigTableSetup(); /* load the rule keywords */
+    SigTableApplyStrictCommandlineOption(suri->strict_rule_parsing_string);
     TmqhSetup();
 
     CIDRInit();
@@ -2785,6 +2520,7 @@ static int PostConfLoadedSetup(SCInstance *suri)
         SCReturnInt(TM_ECODE_FAILED);
     }
 
+    FeatureTrackingRegister(); /* must occur prior to output mod registration */
     RegisterAllModules();
 
     AppLayerHtpNeedFileInspection();
@@ -2798,6 +2534,23 @@ static int PostConfLoadedSetup(SCInstance *suri)
 
     if (InitSignalHandler(suri) != TM_ECODE_OK)
         SCReturnInt(TM_ECODE_FAILED);
+
+    /* Check for the existance of the default logging directory which we pick
+     * from suricata.yaml.  If not found, shut the engine down */
+    suri->log_dir = ConfigGetLogDirectory();
+
+    if (ConfigCheckLogDirectoryExists(suri->log_dir) != TM_ECODE_OK) {
+        SCLogError(SC_ERR_LOGDIR_CONFIG, "The logging directory \"%s\" "
+                "supplied by %s (default-log-dir) doesn't exist. "
+                "Shutting down the engine", suri->log_dir, suri->conf_filename);
+        SCReturnInt(TM_ECODE_FAILED);
+    }
+    if (!IsLogDirectoryWritable(suri->log_dir)) {
+        SCLogError(SC_ERR_LOGDIR_CONFIG, "The logging directory \"%s\" "
+                "supplied by %s (default-log-dir) is not writable. "
+                "Shutting down the engine", suri->log_dir, suri->conf_filename);
+        SCReturnInt(TM_ECODE_FAILED);
+    }
 
 
 #ifdef HAVE_NSS
@@ -2828,7 +2581,7 @@ static int PostConfLoadedSetup(SCInstance *suri)
     LiveDeviceFinalize();
 
     /* set engine mode if L2 IPS */
-    if (PostDeviceFinalizedSetup(&suricata) != TM_ECODE_OK) {
+    if (PostDeviceFinalizedSetup(suri) != TM_ECODE_OK) {
         exit(EXIT_FAILURE);
     }
 
@@ -2860,40 +2613,31 @@ static void SuricataMainLoop(SCInstance *suri)
         }
 
         if (sigusr2_count > 0) {
-            if (suri->sig_file != NULL) {
-                SCLogWarning(SC_ERR_LIVE_RULE_SWAP, "Live rule reload not "
-                        "possible if -s or -S option used at runtime.");
+            if (!(DetectEngineReloadIsStart())) {
+                DetectEngineReloadStart();
+                DetectEngineReload(suri);
+                DetectEngineReloadSetIdle();
                 sigusr2_count--;
-            } else {
-                if (!(DetectEngineReloadIsStart())) {
-                    DetectEngineReloadStart();
-                    DetectEngineReload(suri);
-                    DetectEngineReloadSetIdle();
-                    sigusr2_count--;
-                }
             }
 
         } else if (DetectEngineReloadIsStart()) {
-            if (suri->sig_file != NULL) {
-                SCLogWarning(SC_ERR_LIVE_RULE_SWAP, "Live rule reload not "
-                        "possible if -s or -S option used at runtime.");
-                DetectEngineReloadSetIdle();
-            } else {
-                DetectEngineReload(suri);
-                DetectEngineReloadSetIdle();
-            }
+            DetectEngineReload(suri);
+            DetectEngineReloadSetIdle();
         }
 
         usleep(10* 1000);
     }
 }
 
-int main(int argc, char **argv)
-{
-    SCInstanceInit(&suricata, argv[0]);
+SuricataContext context;
 
-#ifdef HAVE_RUST
-    SuricataContext context;
+/**
+ * \brief Global initialization common to all runmodes.
+ *
+ * This can be used by fuzz targets.
+ */
+
+int InitGlobal(void) {
     context.SCLogMessage = SCLogMessage;
     context.DetectEngineStateFree = DetectEngineStateFree;
     context.AppLayerDecoderEventsSetEventRaw =
@@ -2909,7 +2653,6 @@ int main(int argc, char **argv)
     context.FileSetTx = FileContainerSetTx;
 
     rs_init(&context);
-#endif
 
     SC_ATOMIC_INIT(engine_stage);
 
@@ -2926,12 +2669,26 @@ int main(int argc, char **argv)
     UtilSignalHandlerSetup(SIGUSR2, SIG_IGN);
     if (UtilSignalBlock(SIGUSR2)) {
         SCLogError(SC_ERR_INITIALIZATION, "SIGUSR2 initialization error");
-        exit(EXIT_FAILURE);
+        return EXIT_FAILURE;
     }
 #endif
 
     ParseSizeInit();
     RunModeRegisterRunModes();
+
+    /* Initialize the configuration module. */
+    ConfInit();
+
+    return 0;
+}
+
+int SuricataMain(int argc, char **argv)
+{
+    SCInstanceInit(&suricata, argv[0]);
+
+    if (InitGlobal() != 0) {
+        exit(EXIT_FAILURE);
+    }
 
 #ifdef OS_WIN32
     /* service initialization */
@@ -2939,9 +2696,6 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 #endif /* OS_WIN32 */
-
-    /* Initialize the configuration module. */
-    ConfInit();
 
     if (ParseCommandLine(argc, argv, &suricata) != TM_ECODE_OK) {
         exit(EXIT_FAILURE);
@@ -2996,6 +2750,10 @@ int main(int argc, char **argv)
     }
 
     SCDropMainThreadCaps(suricata.userid, suricata.groupid);
+
+    /* Re-enable coredumps after privileges are dropped. */
+    CoredumpEnable();
+
     PreRunPostPrivsDropInit(suricata.run_mode);
 
     PostConfLoadedDetectSetup(&suricata);
@@ -3003,6 +2761,9 @@ int main(int argc, char **argv)
         goto out;
     } else if (suricata.run_mode == RUNMODE_CONF_TEST){
         SCLogNotice("Configuration provided was successfully loaded. Exiting.");
+        goto out;
+    } else if (suricata.run_mode == RUNMODE_DUMP_FEATURES) {
+        FeatureDump();
         goto out;
     }
 

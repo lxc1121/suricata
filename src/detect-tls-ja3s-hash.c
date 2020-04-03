@@ -68,7 +68,7 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
        void *txv, const int list_id);
 static void DetectTlsJa3SHashSetupCallback(const DetectEngineCtx *de_ctx,
        Signature *s);
-static _Bool DetectTlsJa3SHashValidateCallback(const Signature *s,
+static bool DetectTlsJa3SHashValidateCallback(const Signature *s,
        const char **sigerror);
 static int g_tls_ja3s_hash_buffer_id = 0;
 
@@ -122,9 +122,16 @@ static int DetectTlsJa3SHashSetup(DetectEngineCtx *de_ctx, Signature *s, const c
     if (DetectSignatureSetAppProto(s, ALPROTO_TLS) < 0)
         return -1;
 
+    /* try to enable JA3 */
+    SSLEnableJA3();
+
     /* Check if JA3 is disabled */
-    if (!RunmodeIsUnittests() && Ja3IsDisabled("rule"))
-        return -1;
+    if (!RunmodeIsUnittests() && Ja3IsDisabled("rule")) {
+        if (!SigMatchSilentErrorEnabled(de_ctx, DETECT_AL_TLS_JA3S_HASH)) {
+            SCLogError(SC_WARN_JA3_DISABLED, "ja3(s) support is not enabled");
+        }
+        return -2;
+    }
 
     return 0;
 }
@@ -151,7 +158,7 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
     return buffer;
 }
 
-static _Bool DetectTlsJa3SHashValidateCallback(const Signature *s,
+static bool DetectTlsJa3SHashValidateCallback(const Signature *s,
                                                const char **sigerror)
 {
     const SigMatch *sm = s->init_data->smlists[g_tls_ja3s_hash_buffer_id];
@@ -193,7 +200,7 @@ static void DetectTlsJa3SHashSetupCallback(const DetectEngineCtx *de_ctx,
 
         DetectContentData *cd = (DetectContentData *)sm->ctx;
 
-        _Bool changed = FALSE;
+        bool changed = FALSE;
         uint32_t u;
         for (u = 0; u < cd->content_len; u++)
         {

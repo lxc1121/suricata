@@ -47,11 +47,7 @@
 #include "app-layer-snmp.h"
 #include "output-json-snmp.h"
 
-#ifdef HAVE_RUST
-#ifdef HAVE_LIBJANSSON
-
 #include "rust.h"
-#include "rust-snmp-log-gen.h"
 
 typedef struct LogSNMPFileCtx_ {
     LogFileCtx *file_ctx;
@@ -179,18 +175,3 @@ void JsonSNMPLogRegister(void)
 
     SCLogDebug("SNMP JSON logger registered.");
 }
-
-#else /* No JSON support. */
-
-void JsonSNMPLogRegister(void)
-{
-}
-
-#endif /* HAVE_LIBJANSSON */
-#else /* No rust support. */
-
-void JsonSNMPLogRegister(void)
-{
-}
-
-#endif /* HAVE_RUST */

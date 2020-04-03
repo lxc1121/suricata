@@ -1,4 +1,4 @@
-/* Copyright (C) 2018 Open Information Security Foundation
+/* Copyright (C) 2018-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -16,11 +16,10 @@
  */
 
 use std;
-use core::{self, ALPROTO_UNKNOWN, AppProto, Flow, IPPROTO_TCP};
-use log::*;
+use crate::core::{self, ALPROTO_UNKNOWN, AppProto, Flow, IPPROTO_TCP};
+use crate::log::*;
 use std::mem::transmute;
-use applayer::{self, LoggerFlags};
-use parser::*;
+use crate::applayer::{self, *};
 use std::ffi::CString;
 use nom;
 use super::parser;
@@ -302,7 +301,7 @@ pub extern "C" fn rs_template_parse_request(
     input_len: u32,
     _data: *const std::os::raw::c_void,
     _flags: u8,
-) -> i32 {
+) -> AppLayerResult {
     let eof = unsafe {
         if AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF) > 0 {
             true
@@ -317,10 +316,7 @@ pub extern "C" fn rs_template_parse_request(
 
     let state = cast_pointer!(state, TemplateState);
     let buf = build_slice!(input, input_len as usize);
-    if state.parse_request(buf) {
-        return 1;
-    }
-    return -1;
+    state.parse_request(buf).into()
 }
 
 #[no_mangle]
@@ -332,7 +328,7 @@ pub extern "C" fn rs_template_parse_response(
     input_len: u32,
     _data: *const std::os::raw::c_void,
     _flags: u8,
-) -> i32 {
+) -> AppLayerResult {
     let _eof = unsafe {
         if AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF) > 0 {
             true
@@ -342,10 +338,7 @@ pub extern "C" fn rs_template_parse_response(
     };
     let state = cast_pointer!(state, TemplateState);
     let buf = build_slice!(input, input_len as usize);
-    if state.parse_response(buf) {
-        return 1;
-    }
-    return -1;
+    state.parse_response(buf).into()
 }
 
 #[no_mangle]
@@ -518,8 +511,8 @@ pub unsafe extern "C" fn rs_template_register_parser() {
         name: PARSER_NAME.as_ptr() as *const std::os::raw::c_char,
         default_port: default_port.as_ptr(),
         ipproto: IPPROTO_TCP,
-        probe_ts: rs_template_probing_parser,
-        probe_tc: rs_template_probing_parser,
+        probe_ts: Some(rs_template_probing_parser),
+        probe_tc: Some(rs_template_probing_parser),
         min_depth: 0,
         max_depth: 16,
         state_new: rs_template_state_new,
@@ -544,6 +537,8 @@ pub unsafe extern "C" fn rs_template_register_parser() {
         set_tx_mpm_id: None,
         get_files: None,
         get_tx_iterator: Some(rs_template_state_get_tx_iterator),
+        get_tx_detect_flags: None,
+        set_tx_detect_flags: None,
     };
 
     let ip_proto_str = CString::new("tcp").unwrap();
